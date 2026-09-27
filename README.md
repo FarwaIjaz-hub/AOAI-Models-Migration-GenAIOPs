@@ -5,7 +5,6 @@ Complete guide for planning, implementing, and validating migrations across Azur
 > [!WARNING]
 > **Retirement dates and model availability change frequently.**
 > Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)** for the latest authoritative information.
-> This guide was last updated **May 2026**.
 
 > [!NOTE]
 > **Scope:** This guide focuses on **text generation models** (GPT series and o-series). For audio, image, and embedding models, see the [official retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule).
