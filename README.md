@@ -2,9 +2,6 @@
 
 Complete guide for planning, implementing, and validating migrations across Azure OpenAI model families, with **evaluation tools** and **ready-to-use golden datasets** to compare quality before deploying.
 
-This independent repository is based on
-[`aiappsgbb/AOAI-models-migration`](https://github.com/aiappsgbb/AOAI-models-migration).
-
 > [!WARNING]
 > **Retirement dates and model availability change frequently.**
 > Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements)** for the latest authoritative information.
