@@ -1,6 +1,6 @@
 {
   "name": "Azure OpenAI Models Migration Guide",
-  "description": "A comprehensive guide and toolkit for migrating from GPT-4o/GPT-4o-mini to newer Azure OpenAI models. Includes evaluation tools, migration paths, API changes, and best practices for production deployments. Features a web UI for side-by-side model comparison and supports integration with Azure AI Foundry for cloud evaluation.",
+  "description": "A comprehensive guide and toolkit for planning, implementing, and validating migrations across Azure OpenAI model families. Includes evaluation tools, migration paths, API changes, and production deployment practices, plus a web UI for side-by-side model comparison and Azure AI Foundry integration.",
   "maturity": "Silver",
   "region": "AMER",
   "industry": "Cross",

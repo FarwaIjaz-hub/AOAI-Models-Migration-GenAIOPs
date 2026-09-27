@@ -1,10 +1,9 @@
 # Azure OpenAI Models Migration Guide
 
-Complete guide for migrating from GPT-4o/GPT-4o-mini to newer Azure OpenAI models (GPT-4.1, GPT-5.4, GPT-5.5, o-series), with **evaluation tools** and **ready-to-use golden datasets** to validate quality before deploying.
+Complete guide for planning, implementing, and validating migrations across Azure OpenAI model families, with **evaluation tools** and **ready-to-use golden datasets** to compare quality before deploying.
 
 This independent repository is based on
-[`aiappsgbb/AOAI-models-migration`](https://github.com/aiappsgbb/AOAI-models-migration)
-and is distributed under the MIT License. See [LICENSE](LICENSE) for details.
+[`aiappsgbb/AOAI-models-migration`](https://github.com/aiappsgbb/AOAI-models-migration).
 
 > [!WARNING]
 > **Retirement dates and model availability change frequently.**
@@ -22,7 +21,7 @@ and is distributed under the MIT License. See [LICENSE](LICENSE) for details.
 > ```bash
 > npx skills add FarwaIjaz-hub/AOAI-Models-Migration-GenAIOPs
 > ```
-> Then just ask: *"How do I migrate from GPT-4o to GPT-5.4-mini?"* — see **[Using Skills](docs/using-copilot-skills.md)** for details.
+> Then ask about selecting, evaluating, and migrating between any supported Azure OpenAI models — see **[Using Skills](docs/using-copilot-skills.md)** for details.
 
 ## Migration at a Glance
 
@@ -176,7 +175,3 @@ npx skills add FarwaIjaz-hub/AOAI-Models-Migration-GenAIOPs
 | **Why LLM-as-judge over similarity scoring?** | Similarity penalizes better answers and misses hallucination; LLM judges evaluate meaning. | [Evaluation Guide](docs/evaluation-guide.md) |
 | **How do I track quality over time?** | Azure AI Foundry named evaluation runs + portal side-by-side, or Fabric + Power BI for cross-org. | [Cloud Eval Tracking](docs/cloud-eval-tracking-across-models.md) |
 | **Does this work for agentic apps?** | Same config-only swap — model is one env variable in every framework (SK, LangChain, etc.). | [Agentic Workflow](docs/migrating-multi-step-apps.md) |
-
-## License
-
-MIT

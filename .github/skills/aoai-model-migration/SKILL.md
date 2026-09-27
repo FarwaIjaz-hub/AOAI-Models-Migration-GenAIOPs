@@ -1,11 +1,10 @@
 ---
 name: aoai-model-migration
 description: >
-  Migrate Azure OpenAI applications from GPT-4o/GPT-4o-mini to newer models
-  (GPT-4.1, GPT-5, GPT-5.1 through GPT-5.4, o-series).
+    Migrate Azure OpenAI applications between supported model families and versions.
   Covers API changes, client configuration, parameter adaptation, prompt adjustments,
   and authentication.
-  USE FOR: migrate model, switch model, upgrade model, GPT-4o replacement,
+    USE FOR: migrate model, switch model, upgrade model, replace a retiring model,
   AzureOpenAI to OpenAI client, v1 API, max_completion_tokens, reasoning_effort,
   developer role, system role, parameter adaptation, client factory, model classification.
   DO NOT USE FOR: retirement dates or lifecycle planning (use aoai-model-lifecycle),
@@ -18,12 +17,13 @@ description: >
 
 ## Purpose
 
-Guide developers through migrating Azure OpenAI applications from GPT-4o / GPT-4o-mini to newer model families (GPT-4.1, GPT-5, GPT-5.1, GPT-5.2) and o-series reasoning models (o1 → o3, o3-mini → o4-mini). This skill covers API surface changes, client configuration, parameter adaptation, and prompt adjustments.
+Guide developers through migrations between Azure OpenAI model families and versions, including standard, reasoning, and compact models. This skill covers API surface changes, client configuration, parameter adaptation, and prompt adjustments.
 
 ## When to Use
 
-- Migrating from GPT-4o or GPT-4o-mini to any newer Azure OpenAI model
-- Migrating o-series models (o1 → o3, o3-mini → o4-mini)
+- Migrating between Azure OpenAI model families or versions
+- Replacing retiring, unavailable, or unsuitable model deployments
+- Migrating reasoning models or moving between standard and reasoning families
 - Adapting code to the new v1 API (`/openai/v1/`) used by GPT-4.1+ and GPT-5+
 - Adapting parameters and system prompts for reasoning models (GPT-5, GPT-5.1, GPT-5.2, o-series)
 - Choosing the right replacement model for a given workload
