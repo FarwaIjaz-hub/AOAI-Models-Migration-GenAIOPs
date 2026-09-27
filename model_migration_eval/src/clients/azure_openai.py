@@ -1,0 +1,1176 @@
+"""
+Azure OpenAI Client Wrapper for Model Migration Evaluation
+Provides unified interface for Azure OpenAI model interactions across generations
+"""
+
+import os
+import json
+import random
+import time
+import asyncio
+import hashlib
+import logging
+import threading
+import collections
+from typing import Optional, Dict, Any, List, Generator
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    # Load .env file (encoding='utf-8-sig' strips BOM if present,
+    # preventing the first variable from being mis-named)
+    load_dotenv(override=True, encoding='utf-8-sig')
+except ImportError:
+    pass  # python-dotenv is optional
+
+import yaml
+import httpx
+from openai import AzureOpenAI, AsyncAzureOpenAI, OpenAI, AsyncOpenAI
+from openai.types.chat import ChatCompletion
+import diskcache
+
+# Azure Identity — optional; falls back to API key if not installed
+try:
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    _HAS_AZURE_IDENTITY = True
+except ImportError:
+    _HAS_AZURE_IDENTITY = False
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ModelConfig:
+    """Configuration for a specific model deployment"""
+    deployment_name: str
+    model_version: str
+    max_tokens: int = 4096
+    temperature: float = 0.1
+    top_p: float = 1.0
+    frequency_penalty: float = 0.0
+    presence_penalty: float = 0.0
+    seed: Optional[int] = None
+    reasoning_effort: Optional[str] = None  # o-series / reasoning models only
+    use_max_completion_tokens: Optional[bool] = None  # Auto-detected if None
+    model_family: Optional[str] = None  # "gpt4", "gpt5", "mistral", "gemini", or "realtime" — determines prompt style guidelines
+    backend: str = "azure"  # "azure" for Azure OpenAI, "gemini" for Google Gemini, "realtime" for Realtime API
+    max_concurrent: Optional[int] = None  # Per-model concurrency limit (None → use global default)
+    # Realtime-specific settings (only used when backend="realtime")
+    voice: Optional[str] = None  # TTS/realtime voice: "alloy", "echo", "shimmer", etc.
+    turn_detection: Optional[str] = None  # "server_vad" or None for manual
+
+    @property
+    def modality(self) -> str:
+        """Return 'realtime' for speech-to-speech models, 'text' otherwise."""
+        return 'realtime' if self.backend == 'realtime' else 'text'
+    
+
+@dataclass
+class RequestMetrics:
+    """Metrics collected for each request"""
+    request_id: str
+    model: str
+    start_time: float
+    end_time: float = 0.0
+    ttft: float = 0.0  # Time to first token
+    total_time: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+    status: str = "pending"
+    error: Optional[str] = None
+    
+    def finalize(self, completion: ChatCompletion = None, error: str = None):
+        """Finalize metrics after request completion"""
+        self.end_time = time.time()
+        self.total_time = self.end_time - self.start_time
+        
+        if error:
+            self.status = "error"
+            self.error = error
+        elif completion:
+            self.status = "success"
+            usage = completion.usage
+            if usage:
+                self.prompt_tokens = usage.prompt_tokens
+                self.completion_tokens = usage.completion_tokens
+                self.total_tokens = usage.total_tokens
+                # Handle cached tokens if available
+                if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+                    self.cached_tokens = getattr(usage.prompt_tokens_details, 'cached_tokens', 0) or 0
+                # Handle reasoning tokens for o-series
+                if hasattr(usage, 'completion_tokens_details') and usage.completion_tokens_details:
+                    self.reasoning_tokens = getattr(usage.completion_tokens_details, 'reasoning_tokens', 0) or 0
+
+
+@dataclass
+class CompletionResult:
+    """Result wrapper for model completions"""
+    content: str
+    metrics: RequestMetrics
+    raw_response: Optional[ChatCompletion] = None
+    parsed_json: Optional[Dict] = None
+    
+    def __post_init__(self):
+        """Try to parse content as JSON if possible"""
+        # Safety: if content arrived as dict (SDK v2 json_object mode), serialise it
+        if isinstance(self.content, dict):
+            self.parsed_json = self.content
+            self.content = json.dumps(self.content, ensure_ascii=False)
+        elif self.content is None:
+            self.content = ""
+        elif self.content and not self.parsed_json:
+            try:
+                self.parsed_json = json.loads(self.content)
+            except json.JSONDecodeError:
+                pass
+
+
+class AzureOpenAIClient:
+    """
+    Unified client for Azure OpenAI model interactions.
+    Supports multiple model generations with metrics collection.
+    """
+    
+    def __init__(
+        self,
+        endpoint: str = None,
+        api_key: str = None,
+        api_version: str = None,
+        config_path: str = None
+    ):
+        """
+        Initialize the Azure OpenAI client.
+        
+        Auth priority:
+          1. DefaultAzureCredential (Entra ID / Managed Identity) — if azure-identity is installed
+          2. API key — explicit param, config file, or AZURE_OPENAI_API_KEY env var
+        
+        Args:
+            endpoint: Azure OpenAI endpoint URL
+            api_key: API key (fallback when DefaultAzureCredential is unavailable)
+            api_version: API version string
+            config_path: Path to settings.yaml config file
+        """
+        _default_api_version = "2025-04-01-preview"
+
+        # Load config if provided
+        if config_path and Path(config_path).exists():
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+                azure_config = config.get('azure', {})
+                endpoint = endpoint or azure_config.get('endpoint')
+                api_key = api_key or azure_config.get('api_key')
+                api_version = api_version or azure_config.get('api_version')
+        
+        # Resolve environment variable references (${VAR_NAME} syntax)
+        self.endpoint = self._resolve_env_var(endpoint) or os.getenv('AZURE_OPENAI_ENDPOINT')
+        self.api_key = self._resolve_env_var(api_key) or os.getenv('AZURE_OPENAI_API_KEY')
+        self.api_version = self._resolve_env_var(api_version) or _default_api_version
+        
+        if not self.endpoint:
+            raise ValueError(
+                "Azure OpenAI endpoint is required. "
+                "Set via parameters, config file, or AZURE_OPENAI_ENDPOINT env var."
+            )
+        
+        # -----------------------------------------------------------
+        # Auth: try DefaultAzureCredential first, fall back to API key
+        # -----------------------------------------------------------
+        self._auth_method = "api_key"          # track which auth is in use
+        self._token_provider = None
+        auth_kwargs: Dict[str, Any] = {}
+
+        if _HAS_AZURE_IDENTITY:
+            try:
+                credential = DefaultAzureCredential()
+                self._token_provider = get_bearer_token_provider(
+                    credential,
+                    "https://cognitiveservices.azure.com/.default",
+                )
+                auth_kwargs["azure_ad_token_provider"] = self._token_provider
+                self._auth_method = "entra_id"
+                logger.info("Azure OpenAI client: using DefaultAzureCredential (Entra ID)")
+            except Exception as exc:
+                logger.warning(
+                    "DefaultAzureCredential failed (%s). Falling back to API key.", exc
+                )
+                if not self.api_key:
+                    raise ValueError(
+                        "DefaultAzureCredential failed and no API key provided. "
+                        "Set AZURE_OPENAI_API_KEY or configure Entra ID credentials."
+                    ) from exc
+                auth_kwargs["api_key"] = self.api_key
+        else:
+            # azure-identity not installed — API key only
+            if not self.api_key:
+                raise ValueError(
+                    "Azure OpenAI API key is required (azure-identity not installed for Entra ID). "
+                    "Set via parameters, config file, or AZURE_OPENAI_API_KEY env var."
+                )
+            auth_kwargs["api_key"] = self.api_key
+            logger.info("Azure OpenAI client: using API key (azure-identity not installed)")
+        
+        # Initialize clients
+        self.client = AzureOpenAI(
+            azure_endpoint=self.endpoint,
+            api_version=self.api_version,
+            timeout=300.0,          # 5-minute timeout per request
+            max_retries=3,
+            http_client=httpx.Client(
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                ),
+            ),
+            **auth_kwargs,
+        )
+        
+        self.async_client = AsyncAzureOpenAI(
+            azure_endpoint=self.endpoint,
+            api_version=self.api_version,
+            timeout=300.0,
+            max_retries=3,
+            http_client=httpx.AsyncClient(
+                limits=httpx.Limits(
+                    max_connections=20,             # support parallel evaluations
+                    max_keepalive_connections=10,
+                ),
+            ),
+            **auth_kwargs,
+        )
+        
+        # Track whether we already attempted an auth fallback
+        self._auth_fallback_attempted = False
+        self._auth_fallback_lock = threading.Lock()
+
+        # Model configurations
+        self.models: Dict[str, ModelConfig] = {}
+        
+        # Metrics storage — bounded deque to prevent unbounded memory growth.
+        # Oldest entries are automatically evicted when the limit is reached.
+        self.metrics_history: collections.deque = collections.deque(maxlen=5000)
+        
+        # Cache setup
+        self._cache: Optional[diskcache.Cache] = None
+
+        # Gemini OpenAI-compatible clients (lazy — created on first Gemini model use)
+        self._gemini_client: Optional[OpenAI] = None
+        self._gemini_async_client: Optional[AsyncOpenAI] = None
+        self._gemini_api_key: Optional[str] = None
+
+    # ------------------------------------------------------------------
+    # Runtime auth fallback: Entra ID 401 → API key
+    # ------------------------------------------------------------------
+    def _fallback_to_api_key(self) -> bool:
+        """Recreate both SDK clients using the API key.
+
+        Called automatically when an Entra ID token is accepted by Azure AD
+        but the service principal lacks the RBAC data-plane role on the
+        Azure OpenAI resource (HTTP 401 PermissionDenied).
+
+        Thread-safe: uses a lock so concurrent async tasks don't race to
+        recreate the clients simultaneously.
+
+        Returns True if the caller should retry (either because we just
+        switched, or because another concurrent task already switched).
+        """
+        with self._auth_fallback_lock:
+            # If we already fell back AND we're now on API key, tell the caller
+            # to just retry — the clients are already using the good auth.
+            if self._auth_fallback_attempted:
+                return self._auth_method == "api_key"
+            self._auth_fallback_attempted = True
+
+            if not self.api_key:
+                logger.error(
+                    "Entra ID auth returned 401 and no API key is available for fallback. "
+                    "Assign 'Cognitive Services OpenAI User' to the principal or set AZURE_OPENAI_API_KEY."
+                )
+                return False
+
+            logger.warning(
+                "Entra ID token lacks required RBAC data-action on Azure OpenAI. "
+                "Falling back to API key authentication."
+            )
+
+            auth_kwargs: Dict[str, Any] = {"api_key": self.api_key}
+            self._auth_method = "api_key"
+
+            self.client = AzureOpenAI(
+                azure_endpoint=self.endpoint,
+                api_version=self.api_version,
+                timeout=300.0,
+                max_retries=3,
+                http_client=httpx.Client(
+                    limits=httpx.Limits(
+                        max_connections=10,
+                        max_keepalive_connections=0,
+                    ),
+                ),
+                **auth_kwargs,
+            )
+            self.async_client = AsyncAzureOpenAI(
+                azure_endpoint=self.endpoint,
+                api_version=self.api_version,
+                timeout=300.0,
+                max_retries=3,
+                http_client=httpx.AsyncClient(
+                    limits=httpx.Limits(
+                        max_connections=20,
+                        max_keepalive_connections=10,
+                    ),
+                ),
+                **auth_kwargs,
+            )
+            logger.info("Azure OpenAI client: recreated with API key (fallback from Entra ID)")
+            return True
+
+    # ------------------------------------------------------------------
+    # Gemini client (lazy initialization)
+    # ------------------------------------------------------------------
+    _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    def _ensure_gemini_clients(self) -> None:
+        """Lazily create the Gemini OpenAI-compatible clients.
+
+        Called automatically when a request targets a model with
+        ``backend='gemini'``.  The API key comes from either
+        :meth:`create_client_from_config` (``gemini.api_key`` in
+        settings.yaml) or the ``GEMINI_API_KEY`` env var.
+        """
+        if self._gemini_client is not None:
+            return
+
+        api_key = self._gemini_api_key or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Gemini API key is required for Gemini-backend models. "
+                "Set GEMINI_API_KEY env var or configure gemini.api_key in settings.yaml."
+            )
+
+        self._gemini_client = OpenAI(
+            base_url=self._GEMINI_BASE_URL,
+            api_key=api_key,
+            timeout=300.0,
+            max_retries=0,  # Our complete_async wrapper handles retries
+            http_client=httpx.Client(
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=0,
+                ),
+            ),
+        )
+        self._gemini_async_client = AsyncOpenAI(
+            base_url=self._GEMINI_BASE_URL,
+            api_key=api_key,
+            timeout=300.0,
+            max_retries=0,  # Our complete_async wrapper handles retries
+            http_client=httpx.AsyncClient(
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                ),
+            ),
+        )
+        logger.info("Gemini client: initialised (OpenAI-compatible endpoint)")
+        
+    def _resolve_env_var(self, value: str) -> str:
+        """Resolve environment variable references like ${VAR_NAME}.
+
+        Returns the env-var value when set, or ``""`` when not set.
+        Returning empty (falsy) instead of the raw ``${…}`` template
+        lets callers fall back gracefully (``or`` chains, ``if raw:``
+        guards, etc.) instead of treating the template literal as a
+        real URL/key.
+        """
+        if value and value.startswith('${') and value.endswith('}'):
+            env_var = value[2:-1]
+            return os.getenv(env_var, '')
+        return value
+    
+    def register_model(self, name: str, config: ModelConfig):
+        """Register a model configuration by name"""
+        self.models[name] = config
+        
+    def register_models_from_config(self, config_path: str):
+        """Load and register models from config file"""
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            
+        models_config = config.get('azure', {}).get('models', {})
+        logger.info("register_models_from_config: found %d models in %s: %s",
+                     len(models_config), config_path, list(models_config.keys()))
+        for name, params in models_config.items():
+            # ModelConfig accepts 'backend' from YAML (defaults to "azure")
+            self.register_model(name, ModelConfig(**params))
+        logger.info("register_models_from_config: registered %d models: %s",
+                     len(self.models), list(self.models.keys()))
+            
+    def enable_caching(self, cache_dir: str = ".cache/prompts"):
+        """Enable response caching for repeated queries"""
+        self._cache = diskcache.Cache(cache_dir)
+
+    @staticmethod
+    def build_json_schema_format(name: str, schema: Dict[str, Any], strict: bool = True) -> Dict[str, Any]:
+        """Build a response_format dict for Structured Outputs (json_schema).
+
+        This guarantees the model output conforms to the given JSON Schema,
+        which is more reliable than json_object mode.
+
+        Args:
+            name: A descriptive name for the schema (e.g. "classification_result")
+            schema: A valid JSON Schema dict (type, properties, required, etc.)
+            strict: If True, the model MUST follow the schema exactly.
+
+        Returns:
+            Dict suitable for the ``response_format`` parameter.
+
+        Example::
+
+            fmt = AzureOpenAIClient.build_json_schema_format(
+                "classification",
+                {
+                    "type": "object",
+                    "properties": {
+                        "category": {"type": "string"},
+                        "confidence": {"type": "number"},
+                    },
+                    "required": ["category", "confidence"],
+                    "additionalProperties": False,
+                },
+            )
+            result = client.complete(messages, model_name="gpt54", response_format=fmt)
+        """
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "strict": strict,
+                "schema": schema,
+            },
+        }
+        
+    def _get_cache_key(self, model: str, messages: List[Dict], **kwargs) -> str:
+        """Generate cache key from request parameters"""
+        cache_data = {
+            'model': model,
+            'messages': messages,
+            **kwargs
+        }
+        cache_str = json.dumps(cache_data, sort_keys=True)
+        return hashlib.sha256(cache_str.encode()).hexdigest()
+    
+    def _is_gemini_backend(self, config: ModelConfig) -> bool:
+        """Check if this model uses the Gemini OpenAI-compatible backend."""
+        return config.backend == "gemini"
+
+    @staticmethod
+    def _parse_retry_after(exc: Exception, default: float = 4.0) -> float:
+        """Extract retry delay (seconds) from a 429 error response.
+
+        Supports:
+        - ``Retry-After`` HTTP header (Azure OpenAI)
+        - Gemini ``retryDelay`` in the JSON error body (e.g. ``"22s"``)
+
+        Falls back to *default* when the delay cannot be determined.
+        """
+        # 1. HTTP header (Azure OpenAI / standard)
+        try:
+            resp = getattr(exc, 'response', None)
+            if resp is not None:
+                header = resp.headers.get('retry-after') or resp.headers.get('Retry-After')
+                if header:
+                    return float(header)
+        except (ValueError, AttributeError):
+            pass
+        # 2. Gemini JSON body: {"error": {"details": [{"retryDelay": "22s"}]}}
+        try:
+            body = getattr(exc, 'body', None)
+            if isinstance(body, dict):
+                for detail in body.get('error', {}).get('details', []):
+                    rd = detail.get('retryDelay', '')
+                    if isinstance(rd, str) and rd.endswith('s'):
+                        return float(rd[:-1])
+        except (ValueError, AttributeError, TypeError):
+            pass
+        return default
+
+    @staticmethod
+    def _is_daily_quota_exhausted(exc: Exception) -> bool:
+        """Detect whether a 429 error is a *daily* quota limit (not a
+        transient per-minute rate-limit).
+
+        Gemini free-tier errors include a ``QuotaFailure`` detail whose
+        ``quotaId`` contains ``PerDay``.  Per-minute rate-limits contain
+        ``PerMinute`` in the ``quotaId`` and must **not** be treated as
+        daily — they are transient and should be retried with backoff.
+
+        Only the following indicators are considered *daily* exhaustion:
+
+        1. ``quotaId`` containing ``PerDay``
+        2. ``metadata.quota_limit`` containing ``PerDay``
+        3. ``retryDelay`` >= 3 600 s (1 hour — effectively a daily reset)
+        4. Error message explicitly mentioning ``per day`` / ``PerDay``
+        5. Deep-search for ``PerDay`` in the serialised body
+        6. ``RESOURCE_EXHAUSTED`` status **only** when *no* granular quota
+           details are present (ambiguous legacy format).
+
+        If ``PerMinute`` indicators are found, we always return ``False``
+        regardless of a generic ``RESOURCE_EXHAUSTED`` message, because
+        per-minute limits should be retried — not failed.
+
+        Retrying daily limits is pointless until the next calendar day, so
+        we fail fast instead.
+        """
+        try:
+            body = getattr(exc, 'body', None)
+            if isinstance(body, dict):
+                error_obj = body.get('error', {})
+                if not isinstance(error_obj, dict):
+                    error_obj = {}
+                details = error_obj.get('details', [])
+                if not isinstance(details, list):
+                    details = []
+
+                _found_per_minute = False
+                _found_per_day = False
+                _found_granular_quota = False
+
+                for detail in details:
+                    if not isinstance(detail, dict):
+                        continue
+                    # 1. QuotaFailure violations — check for PerDay / PerMinute
+                    for v in detail.get('violations', []):
+                        if not isinstance(v, dict):
+                            continue
+                        qid = v.get('quotaId', '')
+                        if qid:
+                            _found_granular_quota = True
+                        if 'PerDay' in qid:
+                            _found_per_day = True
+                        if 'PerMinute' in qid:
+                            _found_per_minute = True
+
+                    # 2. ErrorInfo metadata
+                    meta = detail.get('metadata', {})
+                    if isinstance(meta, dict):
+                        ql = meta.get('quota_limit', '')
+                        if ql:
+                            _found_granular_quota = True
+                        if 'PerDay' in ql:
+                            _found_per_day = True
+                        if 'PerMinute' in ql:
+                            _found_per_minute = True
+
+                    # 3. RetryInfo with very long delay (>= 1 h → daily quota)
+                    retry_delay = detail.get('retryDelay', '')
+                    if isinstance(retry_delay, str) and retry_delay.endswith('s'):
+                        try:
+                            if float(retry_delay[:-1]) >= 3600:
+                                _found_per_day = True
+                        except ValueError:
+                            pass
+
+                # Fast path: per-minute indicator present and NO per-day
+                # indicator → this is a transient RPM limit, NOT daily.
+                if _found_per_minute and not _found_per_day:
+                    return False
+
+                # Explicit daily quota found
+                if _found_per_day:
+                    return True
+
+                # 4. Check message for explicit "per day" / "PerDay" mentions
+                msg = error_obj.get('message', '')
+                if isinstance(msg, str):
+                    ml = msg.lower()
+                    if 'quota' in ml and ('per day' in ml or 'PerDay' in msg):
+                        return True
+
+                # 5. Deep search: serialise the full body and look for PerDay
+                #    anywhere in the structure (catches any nested format).
+                try:
+                    body_str = json.dumps(body)
+                    if 'PerDay' in body_str:
+                        return True
+                    # If PerMinute is anywhere in the body → transient, not daily
+                    if 'PerMinute' in body_str:
+                        return False
+                except (TypeError, ValueError):
+                    pass
+
+                # 6. Gemini "Resource has been exhausted" via OpenAI-compat
+                #    endpoint.  Only classify as daily if we found *no*
+                #    granular quota details — when details exist but have no
+                #    PerDay indicator, it is a transient per-minute limit.
+                if _found_granular_quota:
+                    return False  # Had details but no PerDay → per-minute
+
+                # No granular details at all — ambiguous.  Use generic
+                # RESOURCE_EXHAUSTED as daily heuristic only as last resort.
+                if isinstance(msg, str):
+                    ml = msg.lower()
+                    if ('resource' in ml and 'exhausted' in ml) or \
+                       error_obj.get('status') == 'RESOURCE_EXHAUSTED':
+                        return True
+
+        except (AttributeError, TypeError):
+            pass
+
+        # 7. Last resort: check the stringified exception, but exclude
+        #    cases that mention per-minute indicators.
+        exc_str = str(exc)
+        if 'PerMinute' in exc_str:
+            return False
+        exc_lower = exc_str.lower()
+        if 'resource' in exc_lower and 'exhausted' in exc_lower:
+            return True
+
+        return False
+
+    def _is_new_generation_model(self, config: ModelConfig) -> bool:
+        """Check if this is a newer-generation model (GPT-5.x, o-series, or model-router).
+        
+        These models use:
+        - max_completion_tokens instead of max_tokens
+        - 'developer' role instead of 'system' role
+        - reasoning_effort parameter (where applicable)
+        """
+        if config.use_max_completion_tokens is not None:
+            return config.use_max_completion_tokens
+        name = config.deployment_name.lower()
+        return (
+            any(prefix in name for prefix in ('gpt-5', 'gpt5', 'o1', 'o3', 'o4', 'model-router'))
+            or config.reasoning_effort is not None
+        )
+
+    def _needs_max_completion_tokens(self, config: ModelConfig) -> bool:
+        """Determine if the model requires max_completion_tokens instead of max_tokens.
+        
+        Newer-generation and o-series models use max_completion_tokens.
+        """
+        return self._is_new_generation_model(config)
+
+    @staticmethod
+    def _apply_developer_role(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Replace 'system' role with 'developer' for newer-generation models.
+        
+        Per Azure OpenAI migration best practices, newer-generation and o-series
+        models use the 'developer' role instead of 'system'. This method performs
+        the auto-replacement transparently.
+        """
+        return [
+            {**m, 'role': 'developer'} if m.get('role') == 'system' else m
+            for m in messages
+        ]
+    
+    def _build_request_params(
+        self,
+        config: ModelConfig,
+        messages: List[Dict[str, str]],
+        response_format: Optional[Dict] = None,
+        tools: Optional[List[Dict]] = None,
+        stream: bool = False,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Build request parameters dict, handling model-specific differences."""
+        is_gemini = self._is_gemini_backend(config)
+
+        # Auto-replace 'system' → 'developer' for newer-generation models
+        # (Gemini uses standard 'system' role — skip the swap)
+        if not is_gemini and self._is_new_generation_model(config):
+            messages = self._apply_developer_role(messages)
+
+        # Mistral models require the last message to be 'user' or 'tool'.
+        # Dialog scenarios may end with an 'assistant' message (partial agent
+        # acknowledgment), which OpenAI models accept as "continue from here"
+        # but Mistral rejects (error 3230).  Append a minimal user
+        # continuation prompt so the model generates the full response.
+        if (
+            config.model_family == 'mistral'
+            and messages
+            and messages[-1].get('role') == 'assistant'
+        ):
+            messages = list(messages)  # shallow copy — don't mutate caller's list
+            messages.append({
+                'role': 'user',
+                'content': 'Continue with your complete response.',
+            })
+
+        request_params = {
+            'model': config.deployment_name,
+            'messages': messages,
+        }
+        
+        # Use max_completion_tokens for newer Azure models, max_tokens for older
+        # ones and Gemini (Gemini always uses max_tokens)
+        token_limit = kwargs.get('max_tokens', config.max_tokens)
+        if not is_gemini and self._needs_max_completion_tokens(config):
+            request_params['max_completion_tokens'] = token_limit
+        else:
+            request_params['max_tokens'] = token_limit
+        
+        # Sampling parameters — reasoning models (those with reasoning_effort)
+        # only accept the default temperature=1 and reject top_p /
+        # frequency_penalty / presence_penalty, so we omit them entirely.
+        # Gemini also rejects frequency_penalty and presence_penalty
+        # (not part of its API surface).
+        reasoning_effort = kwargs.get('reasoning_effort', config.reasoning_effort)
+        if not reasoning_effort:
+            request_params['temperature'] = kwargs.get('temperature', config.temperature)
+            request_params['top_p'] = kwargs.get('top_p', config.top_p)
+            if not is_gemini:
+                request_params['frequency_penalty'] = kwargs.get('frequency_penalty', config.frequency_penalty)
+                request_params['presence_penalty'] = kwargs.get('presence_penalty', config.presence_penalty)
+        
+        # Optional parameters
+        # Gemini does not document 'seed' support — omit to avoid errors
+        if not is_gemini:
+            seed = kwargs.get('seed', config.seed)
+            if seed is not None:
+                request_params['seed'] = seed
+            
+        if response_format:
+            request_params['response_format'] = response_format
+            
+        if tools:
+            request_params['tools'] = tools
+            
+        if stream:
+            request_params['stream'] = True
+            
+        # Reasoning-model specific: reasoning_effort
+        if reasoning_effort:
+            request_params['reasoning_effort'] = reasoning_effort
+        
+        return request_params
+    
+    def complete(
+        self,
+        messages: List[Dict[str, str]],
+        model_name: str = "gpt4",
+        response_format: Optional[Dict] = None,
+        tools: Optional[List[Dict]] = None,
+        use_cache: bool = False,
+        **kwargs
+    ) -> CompletionResult:
+        """
+        Send a completion request to the specified model.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            model_name: Registered model name (e.g., 'gpt4', 'gpt54')
+            response_format: Response format specification (e.g., {"type": "json_object"})
+            tools: Tool/function definitions for function calling
+            use_cache: Whether to use cached responses
+            **kwargs: Additional parameters to override model config
+            
+        Returns:
+            CompletionResult with content, metrics, and parsed data
+        """
+        if model_name not in self.models:
+            raise ValueError(f"Model '{model_name}' not registered. Use register_model() first.")
+            
+        config = self.models[model_name]
+        
+        # Build request parameters (handles max_tokens vs max_completion_tokens)
+        request_params = self._build_request_params(
+            config, messages,
+            response_format=response_format,
+            tools=tools,
+            **kwargs
+        )
+            
+        # Check cache
+        if use_cache and self._cache:
+            cache_key = self._get_cache_key(model_name, messages, **request_params)
+            cached = self._cache.get(cache_key)
+            if cached:
+                return cached
+        
+        # Initialize metrics
+        metrics = RequestMetrics(
+            request_id=f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}",
+            model=config.deployment_name,
+            start_time=time.time()
+        )
+        
+        try:
+            # Select the correct client based on model backend
+            if self._is_gemini_backend(config):
+                self._ensure_gemini_clients()
+                active_client = self._gemini_client
+            else:
+                active_client = self.client
+
+            # Make the API call
+            response = active_client.chat.completions.create(**request_params)
+            
+            # Extract content — SDK v2 may return a parsed dict with
+            # response_format={"type": "json_object"}, so normalise to str.
+            # Guard: very rarely the SDK returns a raw string instead of
+            # a ChatCompletion object (transient API edge case).
+            if isinstance(response, str):
+                raw_content = response
+            else:
+                raw_content = response.choices[0].message.content if response.choices else ""
+            if isinstance(raw_content, dict):
+                content = json.dumps(raw_content, ensure_ascii=False)
+            elif raw_content is None:
+                content = ""
+            else:
+                content = raw_content
+            
+            # Finalize metrics
+            metrics.finalize(completion=response)
+            
+            # Create result
+            result = CompletionResult(
+                content=content,
+                metrics=metrics,
+                raw_response=response
+            )
+            
+            # Cache if enabled
+            if use_cache and self._cache:
+                self._cache.set(cache_key, result)
+                
+            # Store metrics
+            self.metrics_history.append(metrics)
+            
+            return result
+
+        except Exception as e:
+            # --- Runtime auth fallback: 401 → API key (Azure only) ---
+            from openai import AuthenticationError
+            if (
+                not self._is_gemini_backend(config)
+                and isinstance(e, AuthenticationError)
+                and self._fallback_to_api_key()
+            ):
+                logger.info("Retrying request with API key after Entra ID 401…")
+                # Reset metrics for the retry
+                metrics = RequestMetrics(
+                    request_id=metrics.request_id + "_retry",
+                    model=config.deployment_name,
+                    start_time=time.time(),
+                )
+                request_params["model"] = config.deployment_name
+                response = self.client.chat.completions.create(**request_params)
+                if isinstance(response, str):
+                    raw_content = response
+                else:
+                    raw_content = response.choices[0].message.content if response.choices else ""
+                if isinstance(raw_content, dict):
+                    content = json.dumps(raw_content, ensure_ascii=False)
+                elif raw_content is None:
+                    content = ""
+                else:
+                    content = raw_content
+                metrics.finalize(completion=response if not isinstance(response, str) else None)
+                self.metrics_history.append(metrics)
+                result = CompletionResult(content=content, metrics=metrics, raw_response=response)
+                if use_cache and self._cache:
+                    self._cache.set(cache_key, result)
+                return result
+            metrics.finalize(error=str(e))
+            self.metrics_history.append(metrics)
+            raise
+            
+    async def complete_async(
+        self,
+        messages: List[Dict[str, str]],
+        model_name: str = "gpt4",
+        response_format: Optional[Dict] = None,
+        tools: Optional[List[Dict]] = None,
+        **kwargs
+    ) -> CompletionResult:
+        """Async version of complete()"""
+        if model_name not in self.models:
+            raise ValueError(f"Model '{model_name}' not registered.")
+            
+        config = self.models[model_name]
+        
+        request_params = self._build_request_params(
+            config, messages,
+            response_format=response_format,
+            tools=tools,
+            **kwargs
+        )
+            
+        # Gemini free tier is very restrictive (5 RPM, ~20 RPD) and
+        # often returns 429/503.  We retry generously with exponential
+        # backoff + jitter for ALL transient HTTP errors.
+        # Gemini models get more retries and a minimum inter-retry delay
+        # to stay within the 5 requests-per-minute limit.
+        _is_gemini = self._is_gemini_backend(config)
+        _MAX_TRANSIENT_RETRIES = 12 if _is_gemini else 6
+        _GEMINI_MIN_RETRY_SECS = 13.0   # 60 s / 5 RPM ≈ 12 s + margin
+        _TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
+
+        for _attempt in range(_MAX_TRANSIENT_RETRIES + 1):
+            metrics = RequestMetrics(
+                request_id=f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}",
+                model=config.deployment_name,
+                start_time=time.time()
+            )
+
+            try:
+                # Select the correct async client based on model backend
+                if self._is_gemini_backend(config):
+                    self._ensure_gemini_clients()
+                    active_client = self._gemini_async_client
+                else:
+                    active_client = self.async_client
+
+                response = await active_client.chat.completions.create(**request_params)
+                # Guard: very rarely the SDK returns a raw string instead
+                # of a ChatCompletion object (transient API edge case).
+                if isinstance(response, str):
+                    raw_content = response
+                else:
+                    raw_content = response.choices[0].message.content if response.choices else ""
+                if isinstance(raw_content, dict):
+                    content = json.dumps(raw_content, ensure_ascii=False)
+                elif raw_content is None:
+                    content = ""
+                else:
+                    content = raw_content
+                metrics.finalize(completion=response if not isinstance(response, str) else None)
+                self.metrics_history.append(metrics)
+
+                return CompletionResult(
+                    content=content,
+                    metrics=metrics,
+                    raw_response=response
+                )
+            except Exception as e:
+                # --- Transient errors (429/5xx) → retry with backoff + jitter ---
+                from openai import APIStatusError
+                _status = getattr(e, 'status_code', None)
+                if (
+                    isinstance(e, APIStatusError)
+                    and _status in _TRANSIENT_STATUS_CODES
+                    and _attempt < _MAX_TRANSIENT_RETRIES
+                ):
+                    # Daily quota exhausted (e.g. Gemini free-tier ~20 RPD)
+                    # → retrying is pointless, fail immediately.
+                    if _status == 429 and self._is_daily_quota_exhausted(e):
+                        _quota_msg = (
+                            f"Daily quota exhausted for '{model_name}'. "
+                            f"The Gemini free tier allows ~20 requests/day. "
+                            f"Wait until tomorrow or upgrade to a paid plan."
+                        )
+                        logger.error(_quota_msg)
+                        metrics.finalize(error=_quota_msg)
+                        self.metrics_history.append(metrics)
+                        raise RuntimeError(_quota_msg) from e
+
+                    # Try to honour the server's suggested retry delay
+                    _default_wait = min(2 ** _attempt * 2, 120)
+                    wait = self._parse_retry_after(e, default=_default_wait)
+                    # Gemini free tier (5 RPM): enforce minimum spacing so
+                    # we don't immediately hit the per-minute limit again.
+                    if _is_gemini:
+                        wait = max(wait, _GEMINI_MIN_RETRY_SECS)
+                    # Add jitter (±25 %) to avoid thundering-herd on resume
+                    wait = wait * (0.75 + random.random() * 0.5)
+                    logger.warning(
+                        "%s (HTTP %s) for %s (attempt %d/%d). "
+                        "Retrying in %.1fs…",
+                        type(e).__name__, _status,
+                        model_name, _attempt + 1, _MAX_TRANSIENT_RETRIES,
+                        wait,
+                    )
+                    metrics.finalize(error=str(e))
+                    self.metrics_history.append(metrics)
+                    await asyncio.sleep(wait)
+                    continue
+
+                # --- Runtime auth fallback: 401 → API key (Azure only) ---
+                from openai import AuthenticationError
+                if (
+                    not self._is_gemini_backend(config)
+                    and isinstance(e, AuthenticationError)
+                    and self._fallback_to_api_key()
+                ):
+                    logger.info("Retrying async request with API key after Entra ID 401…")
+                    metrics = RequestMetrics(
+                        request_id=metrics.request_id + "_retry",
+                        model=config.deployment_name,
+                        start_time=time.time(),
+                    )
+                    request_params["model"] = config.deployment_name
+                    response = await self.async_client.chat.completions.create(**request_params)
+                    if isinstance(response, str):
+                        raw_content = response
+                    else:
+                        raw_content = response.choices[0].message.content if response.choices else ""
+                    if isinstance(raw_content, dict):
+                        content = json.dumps(raw_content, ensure_ascii=False)
+                    elif raw_content is None:
+                        content = ""
+                    else:
+                        content = raw_content
+                    metrics.finalize(completion=response if not isinstance(response, str) else None)
+                    self.metrics_history.append(metrics)
+                    return CompletionResult(content=content, metrics=metrics, raw_response=response)
+                metrics.finalize(error=str(e))
+                self.metrics_history.append(metrics)
+                raise
+            
+    def stream_complete(
+        self,
+        messages: List[Dict[str, str]],
+        model_name: str = "gpt4",
+        **kwargs
+    ) -> Generator[str, None, CompletionResult]:
+        """
+        Stream completion response token by token.
+        
+        Yields:
+            Content chunks as they arrive
+            
+        Returns:
+            Final CompletionResult after streaming completes
+        """
+        if model_name not in self.models:
+            raise ValueError(f"Model '{model_name}' not registered.")
+            
+        config = self.models[model_name]
+        
+        request_params = self._build_request_params(
+            config, messages, stream=True, **kwargs
+        )
+            
+        metrics = RequestMetrics(
+            request_id=f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}",
+            model=config.deployment_name,
+            start_time=time.time()
+        )
+        
+        full_content = ""
+        first_token = True
+        
+        try:
+            # Select the correct client based on model backend
+            if self._is_gemini_backend(config):
+                self._ensure_gemini_clients()
+                active_client = self._gemini_client
+            else:
+                active_client = self.client
+
+            stream = active_client.chat.completions.create(**request_params)
+            
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    
+                    if first_token:
+                        metrics.ttft = time.time() - metrics.start_time
+                        first_token = False
+                        
+                    full_content += content
+                    yield content
+                    
+            metrics.end_time = time.time()
+            metrics.total_time = metrics.end_time - metrics.start_time
+            metrics.status = "success"
+            self.metrics_history.append(metrics)
+            
+            return CompletionResult(content=full_content, metrics=metrics)
+            
+        except Exception as e:
+            metrics.finalize(error=str(e))
+            self.metrics_history.append(metrics)
+            raise
+            
+    def get_metrics_summary(self) -> Dict[str, Any]:
+        """Get summary statistics of all requests"""
+        if not self.metrics_history:
+            return {"total_requests": 0}
+            
+        successful = [m for m in self.metrics_history if m.status == "success"]
+        
+        if not successful:
+            return {
+                "total_requests": len(self.metrics_history),
+                "successful_requests": 0,
+                "error_rate": 1.0
+            }
+            
+        import numpy as np
+        latencies = np.array([m.total_time for m in successful])
+        tokens = [m.total_tokens for m in successful]
+        
+        return {
+            "total_requests": len(self.metrics_history),
+            "successful_requests": len(successful),
+            "error_rate": 1 - (len(successful) / len(self.metrics_history)),
+            "latency": {
+                "mean": float(np.mean(latencies)),
+                "min": float(np.min(latencies)),
+                "max": float(np.max(latencies)),
+                "p50": float(np.median(latencies)),
+                "p95": float(np.percentile(latencies, 95)),
+                "p99": float(np.percentile(latencies, 99))
+            },
+            "tokens": {
+                "total": sum(tokens),
+                "mean_per_request": sum(tokens) / len(tokens)
+            }
+        }
+        
+    def clear_metrics(self):
+        """Clear metrics history"""
+        self.metrics_history.clear()
+
+
+def create_client_from_config(config_path: str = "config/settings.yaml") -> AzureOpenAIClient:
+    """
+    Factory function to create a configured client from settings file.
+    
+    Args:
+        config_path: Path to settings.yaml
+        
+    Returns:
+        Configured AzureOpenAIClient instance
+    """
+    client = AzureOpenAIClient(config_path=config_path)
+    client.register_models_from_config(config_path)
+    
+    # Load full config for additional settings
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # Gemini API key (optional — only needed if Gemini models are configured)
+    gemini_config = config.get('gemini', {})
+    gemini_api_key = gemini_config.get('api_key')
+    if gemini_api_key:
+        resolved = client._resolve_env_var(gemini_api_key) or os.getenv('GEMINI_API_KEY')
+        if resolved:
+            client._gemini_api_key = resolved
+
+    # Cache settings
+    cache_config = config.get('caching', {})
+    if cache_config.get('enabled', False):
+        client.enable_caching(cache_config.get('cache_dir', '.cache/prompts'))
+        
+    return client
+
+
+# Example usage
+if __name__ == "__main__":
+    # Demo with mock configuration
+    print("Azure OpenAI Client Module")
+    print("=" * 50)
+    print("\nUsage:")
+    print("  from src.clients.azure_openai import create_client_from_config")
+    print("  client = create_client_from_config('config/settings.yaml')")
+    print("  result = client.complete(messages=[{'role': 'user', 'content': 'Hello'}], model_name='gpt4')")
+    print("  print(result.content)")

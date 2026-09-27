@@ -1,0 +1,1193 @@
+"""
+Model Comparator Module
+Compares evaluation results between any two configured models.
+
+Supports parallel execution: both models can be evaluated simultaneously
+and Foundry LLM-as-judge submissions run concurrently.
+"""
+
+import json
+import asyncio
+import uuid
+from typing import Dict, List, Any, Optional, Tuple, Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+import logging
+import numpy as np
+
+import yaml
+
+from .evaluator import ModelEvaluator, EvaluationResult, _run_in_loop
+from .metrics import (
+    ClassificationMetrics,
+    ConsistencyMetrics,
+    LatencyMetrics,
+    QualityMetrics,
+    ToolCallingMetrics,
+    MetricsCalculator
+)
+from .realtime_evaluator import RealtimeEvaluator
+from .realtime_metrics import RealtimeMetrics
+from ..clients.azure_openai import AzureOpenAIClient
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ComparisonDimension:
+    """A single dimension of comparison between models"""
+    dimension: str
+    model_a_value: float
+    model_b_value: float
+    difference: float
+    percent_change: float
+    better_model: str
+    significance: str  # 'high', 'medium', 'low', 'negligible'
+    
+    def to_dict(self) -> Dict:
+        return {
+            'dimension': self.dimension,
+            'model_a_value': self.model_a_value,
+            'model_b_value': self.model_b_value,
+            'difference': self.difference,
+            'percent_change': self.percent_change,
+            'better_model': self.better_model,
+            'significance': self.significance
+        }
+
+
+@dataclass
+class ComparisonReport:
+    """Complete comparison report between two models"""
+    model_a: str
+    model_b: str
+    timestamp: str
+    evaluation_type: str
+    dimensions: List[ComparisonDimension]
+    summary: Dict[str, Any]
+    recommendations: List[str]
+    raw_results_a: Optional[List[Dict]] = None
+    raw_results_b: Optional[List[Dict]] = None
+    statistical_significance: Optional[Dict[str, Any]] = None  # NEW
+    foundry_scores_a: Optional[Dict[str, Any]] = None
+    foundry_scores_b: Optional[Dict[str, Any]] = None
+    foundry_meta: Optional[Dict[str, Any]] = None
+    migration_readiness: Optional[Dict[str, Any]] = None
+    batch_id: Optional[str] = None
+    
+    @staticmethod
+    def _sanitize(obj):
+        """Recursively cast numpy scalars to native Python types for JSON safety."""
+        if isinstance(obj, dict):
+            return {k: ComparisonReport._sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [ComparisonReport._sanitize(v) for v in obj]
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
+    def to_dict(self) -> Dict:
+        raw = {
+            'model_a': self.model_a,
+            'model_b': self.model_b,
+            'timestamp': self.timestamp,
+            'evaluation_type': self.evaluation_type,
+            'dimensions': [d.to_dict() for d in self.dimensions],
+            'summary': self.summary,
+            'recommendations': self.recommendations,
+            'statistical_significance': self.statistical_significance,
+            'foundry_scores_a': self.foundry_scores_a,
+            'foundry_scores_b': self.foundry_scores_b,
+            'foundry_meta': self.foundry_meta,
+            'migration_readiness': self.migration_readiness,
+            'batch_id': self.batch_id,
+        }
+        return self._sanitize(raw)
+        
+    def save(self, output_dir: str = "data/results"):
+        """Save comparison report to JSON file (atomic write to prevent truncation)"""
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"comparison_{self.model_a}_vs_{self.model_b}_{self.evaluation_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        final_path = output_path / filename
+        tmp_path = final_path.with_suffix('.json.tmp')
+        try:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(self.to_dict(), f, indent=2)
+            tmp_path.replace(final_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+            
+    def to_markdown(self) -> str:
+        """Generate markdown summary of comparison"""
+        md = f"""# Model Comparison Report: {self.model_a} vs {self.model_b}
+
+**Evaluation Type:** {self.evaluation_type}  
+**Generated:** {self.timestamp}
+
+## Summary
+
+| Metric | {self.model_a} | {self.model_b} | Winner |
+|--------|-------|-------|--------|
+"""
+        for dim in self.dimensions:
+            winner = dim.better_model if dim.significance != 'negligible' else "~"
+            md += f"| {dim.dimension} | {dim.model_a_value:.4f} | {dim.model_b_value:.4f} | {winner} |\n"
+            
+        md += "\n## Key Findings\n\n"
+        for rec in self.recommendations:
+            md += f"- {rec}\n"
+            
+        return md
+
+
+class ModelComparator:
+    """
+    Compares evaluation results between Azure OpenAI models.
+    Generates detailed comparison reports with recommendations.
+    """
+    
+    def __init__(
+        self,
+        client: AzureOpenAIClient,
+        evaluator: Optional[ModelEvaluator] = None,
+        foundry_evaluator: Optional[Any] = None,
+        parallel_models: bool = True,
+        config_path: str = "config/settings.yaml",
+        acceptance_thresholds: Optional[Dict[str, Dict[str, float]]] = None,
+        prompt_loader = None,
+        data_loader = None,
+    ):
+        """
+        Initialize the comparator.
+        
+        Args:
+            client: AzureOpenAIClient for running evaluations
+            evaluator: Optional ModelEvaluator instance
+            foundry_evaluator: Optional FoundryEvaluator instance
+            parallel_models: If True, evaluate both models simultaneously
+            config_path: Path to settings.yaml (only used if acceptance_thresholds not given)
+            acceptance_thresholds: Pre-loaded thresholds dict (avoids re-reading YAML)
+            prompt_loader: Optional PromptLoader for user-specific prompts
+            data_loader: Optional DataLoader for user-specific test data
+        """
+        self.client = client
+        self.evaluator = evaluator or ModelEvaluator(client)
+        self.foundry_evaluator = foundry_evaluator
+        self.parallel_models = parallel_models
+        self._prompt_loader = prompt_loader
+        self._data_loader = data_loader
+        self._realtime_evaluator: Optional[RealtimeEvaluator] = None
+        self._realtime_settings: Dict[str, Any] = {}  # from settings.yaml → realtime
+        
+        # Significance thresholds
+        self.thresholds = {
+            'high': 0.10,      # 10% difference
+            'medium': 0.05,   # 5% difference
+            'low': 0.02       # 2% difference
+        }
+
+        # Acceptance thresholds for migration readiness
+        if acceptance_thresholds is not None:
+            self.acceptance_thresholds = acceptance_thresholds
+        else:
+            self.acceptance_thresholds = {}
+            try:
+                if config_path and Path(config_path).exists():
+                    with open(config_path, 'r') as f:
+                        cfg = yaml.safe_load(f)
+                    self.acceptance_thresholds = (
+                        cfg.get('evaluation', {}).get('acceptance_thresholds', {})
+                    )
+            except Exception:
+                pass
+        
+    def compare_models(
+        self,
+        model_a: str,
+        model_b: str,
+        evaluation_type: str = "classification",
+        run_evaluations: bool = True,
+        existing_results: Optional[Tuple[EvaluationResult, EvaluationResult]] = None,
+        include_foundry: bool = False,
+    ) -> ComparisonReport:
+        """
+        Compare two models on a specific evaluation type.
+        Delegates to the async implementation for parallel execution.
+        """
+        return _run_in_loop(self.compare_models_async(
+            model_a, model_b, evaluation_type,
+            run_evaluations=run_evaluations,
+            existing_results=existing_results,
+            include_foundry=include_foundry,
+        ))
+
+    async def compare_models_async(
+        self,
+        model_a: str,
+        model_b: str,
+        evaluation_type: str = "classification",
+        run_evaluations: bool = True,
+        existing_results: Optional[Tuple[EvaluationResult, EvaluationResult]] = None,
+        include_foundry: bool = False,
+    ) -> ComparisonReport:
+        """
+        Async comparison: evaluates both models in parallel (when
+        ``parallel_models`` is enabled), then optionally submits both
+        Foundry evaluations concurrently.
+        """
+        # Get evaluation results
+        if existing_results:
+            result_a, result_b = existing_results
+        elif run_evaluations:
+            result_a, result_b = await self._run_evaluations_async(
+                model_a, model_b, evaluation_type
+            )
+        else:
+            raise ValueError("Must provide existing_results or set run_evaluations=True")
+            
+        foundry_scores_a: Optional[Dict[str, Any]] = None
+        foundry_scores_b: Optional[Dict[str, Any]] = None
+        foundry_meta: Optional[Dict[str, Any]] = None
+
+        # Optional: submit both model outputs to Foundry LLM-as-judge
+        if include_foundry:
+            foundry_meta = {
+                'enabled': True,
+                'completed': False,
+                'errors': [],
+                'model_a': {'eval_id': None, 'run_id': None, 'report_url': None},
+                'model_b': {'eval_id': None, 'run_id': None, 'report_url': None},
+            }
+            if self.foundry_evaluator is None:
+                foundry_meta['errors'].append('Foundry evaluator is not configured.')
+            else:
+                foundry_scores_a, foundry_scores_b, foundry_meta = await self._run_foundry_parallel(
+                    result_a, result_b, evaluation_type, model_a, model_b, foundry_meta
+                )
+
+        # Generate comparison dimensions
+        dimensions = self._generate_dimensions(
+            result_a,
+            result_b,
+            evaluation_type,
+            foundry_scores_a=foundry_scores_a,
+            foundry_scores_b=foundry_scores_b,
+        )
+        
+        # Generate summary
+        summary = self._generate_summary(dimensions, model_a, model_b)
+        if include_foundry:
+            foundry_dims = [d for d in dimensions if d.dimension.endswith('(Foundry)')]
+            summary['foundry'] = {
+                'enabled': True,
+                'metrics_compared': len(foundry_dims),
+                'completed': bool(foundry_scores_a and foundry_scores_b),
+                'errors': (foundry_meta or {}).get('errors', []),
+            }
+        
+        # Generate recommendations
+        recommendations = self._generate_recommendations(
+            dimensions, result_a, result_b, model_a, model_b
+        )
+
+        # Evaluate migration readiness against acceptance thresholds
+        migration_readiness = self._evaluate_migration_readiness(
+            result_b, evaluation_type, model_b
+        )
+        
+        # Statistical significance tests
+        statistical_significance = None
+        if result_a.raw_results and result_b.raw_results:
+            try:
+                statistical_significance = MetricsCalculator.calculate_statistical_significance(
+                    result_a.raw_results, result_b.raw_results
+                )
+            except Exception:
+                pass
+        
+        return ComparisonReport(
+            model_a=model_a,
+            model_b=model_b,
+            timestamp=datetime.now().isoformat(),
+            evaluation_type=evaluation_type,
+            dimensions=dimensions,
+            summary=summary,
+            recommendations=recommendations,
+            raw_results_a=result_a.raw_results,
+            raw_results_b=result_b.raw_results,
+            statistical_significance=statistical_significance,
+            foundry_scores_a=foundry_scores_a,
+            foundry_scores_b=foundry_scores_b,
+            foundry_meta=foundry_meta,
+            migration_readiness=migration_readiness,
+        )
+        
+    def compare_models_batch(
+        self,
+        model_a: str,
+        model_b_list: List[str],
+        evaluation_type: str = "classification",
+        include_foundry: bool = False,
+        progress_callback: Optional[Callable[[int, int, str, Optional[ComparisonReport]], None]] = None,
+    ) -> List[ComparisonReport]:
+        """Compare model_a against multiple model_b's, evaluating A only once.
+
+        Args:
+            model_a: Reference model name.
+            model_b_list: List of candidate model names to compare against A.
+            evaluation_type: One of 'classification', 'dialog', 'general',
+                'rag', 'tool_calling'.
+            include_foundry: Whether to run Foundry LLM-as-judge evaluations.
+            progress_callback: Optional ``(completed_idx, total, current_model_b,
+                report_or_None)`` called after each pair completes.
+
+        Returns:
+            List of ComparisonReport — one per model_b.
+        """
+        return _run_in_loop(self.compare_models_batch_async(
+            model_a, model_b_list, evaluation_type,
+            include_foundry=include_foundry,
+            progress_callback=progress_callback,
+        ))
+
+    async def compare_models_batch_async(
+        self,
+        model_a: str,
+        model_b_list: List[str],
+        evaluation_type: str = "classification",
+        include_foundry: bool = False,
+        progress_callback: Optional[Callable[[int, int, str, Optional[ComparisonReport]], None]] = None,
+    ) -> List[ComparisonReport]:
+        """Async batch comparison: evaluates model_a once, then each model_b.
+
+        Foundry scores for model_a are also submitted once and reused.
+        """
+        batch_id = uuid.uuid4().hex[:12]
+        total = len(model_b_list)
+        reports: List[ComparisonReport] = []
+
+        # 1. Evaluate model A once
+        logger.info(f"[Batch {batch_id}] Evaluating model_a={model_a} ({evaluation_type})")
+        result_a = await self._evaluate_single_model_async(model_a, evaluation_type)
+
+        # 2. Foundry for model_a (once)
+        foundry_scores_a: Optional[Dict[str, Any]] = None
+        foundry_meta_a: Optional[Dict[str, Any]] = None
+        if include_foundry and self.foundry_evaluator is not None:
+            logger.info(f"[Batch {batch_id}] Submitting Foundry evaluation for model_a={model_a}")
+            foundry_scores_a, foundry_meta_a = await self._submit_foundry_single(
+                result_a, evaluation_type, model_a
+            )
+
+        # 3. For each model_b: evaluate, optionally Foundry, compare
+        for idx, model_b in enumerate(model_b_list):
+            logger.info(
+                f"[Batch {batch_id}] Comparing {model_a} vs {model_b} "
+                f"({idx + 1}/{total})"
+            )
+
+            # Notify that this comparison is *starting* so the UI can
+            # update the progress label immediately (before the eval runs).
+            if progress_callback:
+                try:
+                    progress_callback(idx, total, model_b, None, starting=True)
+                except Exception:
+                    pass
+
+            try:
+                self._validate_modality(model_a, model_b)
+                result_b = await self._evaluate_single_model_async(model_b, evaluation_type)
+
+                # Foundry for model_b
+                f_scores_b: Optional[Dict[str, Any]] = None
+                f_meta: Optional[Dict[str, Any]] = None
+                if include_foundry:
+                    f_meta = {
+                        'enabled': True,
+                        'completed': False,
+                        'errors': [],
+                        'model_a': foundry_meta_a or {'eval_id': None, 'run_id': None, 'report_url': None},
+                        'model_b': {'eval_id': None, 'run_id': None, 'report_url': None},
+                    }
+                    if self.foundry_evaluator is None:
+                        f_meta['errors'].append('Foundry evaluator is not configured.')
+                    else:
+                        logger.info(f"[Batch {batch_id}] Submitting Foundry for model_b={model_b}")
+                        f_scores_b, f_meta_b = await self._submit_foundry_single(
+                            result_b, evaluation_type, model_b
+                        )
+                        f_meta['model_b'] = f_meta_b or {'eval_id': None, 'run_id': None, 'report_url': None}
+                        if f_scores_b is None:
+                            f_meta['errors'].append(f"No Foundry scores returned for {model_b}.")
+                        if foundry_scores_a is None:
+                            f_meta['errors'].append(f"No Foundry scores returned for {model_a}.")
+                        f_meta['completed'] = bool(foundry_scores_a and f_scores_b)
+
+                # Build comparison report
+                dimensions = self._generate_dimensions(
+                    result_a, result_b, evaluation_type,
+                    foundry_scores_a=foundry_scores_a,
+                    foundry_scores_b=f_scores_b,
+                )
+                summary = self._generate_summary(dimensions, model_a, model_b)
+                if include_foundry:
+                    foundry_dims = [d for d in dimensions if d.dimension.endswith('(Foundry)')]
+                    summary['foundry'] = {
+                        'enabled': True,
+                        'metrics_compared': len(foundry_dims),
+                        'completed': bool(foundry_scores_a and f_scores_b),
+                        'errors': (f_meta or {}).get('errors', []),
+                    }
+                recommendations = self._generate_recommendations(
+                    dimensions, result_a, result_b, model_a, model_b
+                )
+                migration_readiness = self._evaluate_migration_readiness(
+                    result_b, evaluation_type, model_b
+                )
+                statistical_significance = None
+                if result_a.raw_results and result_b.raw_results:
+                    try:
+                        statistical_significance = MetricsCalculator.calculate_statistical_significance(
+                            result_a.raw_results, result_b.raw_results
+                        )
+                    except Exception:
+                        pass
+
+                report = ComparisonReport(
+                    model_a=model_a,
+                    model_b=model_b,
+                    timestamp=datetime.now().isoformat(),
+                    evaluation_type=evaluation_type,
+                    dimensions=dimensions,
+                    summary=summary,
+                    recommendations=recommendations,
+                    raw_results_a=result_a.raw_results,
+                    raw_results_b=result_b.raw_results,
+                    statistical_significance=statistical_significance,
+                    foundry_scores_a={'aggregated': foundry_scores_a.get('aggregated', {})} if foundry_scores_a else None,
+                    foundry_scores_b={'aggregated': f_scores_b.get('aggregated', {})} if f_scores_b else None,
+                    foundry_meta=f_meta,
+                    migration_readiness=migration_readiness,
+                    batch_id=batch_id,
+                )
+                reports.append(report)
+
+                if progress_callback:
+                    try:
+                        progress_callback(idx + 1, total, model_b, report)
+                    except Exception:
+                        pass
+
+            except Exception as exc:
+                logger.error(f"[Batch {batch_id}] Failed {model_a} vs {model_b}: {exc}")
+                if progress_callback:
+                    try:
+                        progress_callback(idx + 1, total, model_b, None)
+                    except Exception:
+                        pass
+
+        logger.info(f"[Batch {batch_id}] Completed {len(reports)}/{total} comparisons")
+        return reports
+
+    async def _evaluate_single_model_async(
+        self,
+        model: str,
+        evaluation_type: str,
+    ) -> 'EvaluationResult':
+        """Evaluate a single model for the given evaluation type.
+
+        Dispatches to the ``RealtimeEvaluator`` when the model's backend
+        is ``"realtime"``, otherwise uses the standard ``ModelEvaluator``.
+        """
+        cfg = self.client.models.get(model)
+        if cfg and cfg.backend == "realtime":
+            return await self._evaluate_realtime_model(model, evaluation_type)
+
+        if evaluation_type == "classification":
+            return await self.evaluator.evaluate_classification_async(model)
+        elif evaluation_type == "dialog":
+            return await self.evaluator.evaluate_dialog_async(model)
+        elif evaluation_type == "rag":
+            return await self.evaluator.evaluate_rag_async(model)
+        elif evaluation_type == "tool_calling":
+            return await self.evaluator.evaluate_tool_calling_async(model)
+        else:
+            return await self.evaluator.evaluate_general_async(model)
+
+    async def _evaluate_realtime_model(
+        self,
+        model: str,
+        evaluation_type: str,
+    ) -> 'EvaluationResult':
+        """Lazy-init and delegate to the ``RealtimeEvaluator``.
+
+        Reads ``self._realtime_settings`` (populated from
+        ``settings.yaml → realtime``) to configure a dedicated voice
+        endpoint and TTS model.
+        """
+        if self._realtime_evaluator is None:
+            from ..clients.tts_client import load_tts_config_from_settings
+            # Resolve optional dedicated endpoint for voice models
+            rt_cfg = self._realtime_settings
+            raw_ep = rt_cfg.get('endpoint', '')
+            realtime_endpoint = self.client._resolve_env_var(raw_ep) if raw_ep else None
+            raw_apiv = rt_cfg.get('api_version', '')
+            realtime_api_version = self.client._resolve_env_var(raw_apiv) if raw_apiv else None
+            # TTS may live on a different endpoint than Realtime
+            raw_tts_ep = rt_cfg.get('tts_endpoint', '')
+            tts_endpoint = self.client._resolve_env_var(raw_tts_ep) if raw_tts_ep else None
+
+            # Build TTS config from settings (not hardcoded)
+            tts_config = load_tts_config_from_settings(
+                {'realtime': rt_cfg}
+            )
+
+            self._realtime_evaluator = RealtimeEvaluator(
+                azure_client=self.client,
+                prompt_loader=self._prompt_loader,
+                data_loader=self._data_loader,
+                tts_config=tts_config,
+                max_concurrent=2,
+                realtime_endpoint=realtime_endpoint if realtime_endpoint else None,
+                realtime_api_version=realtime_api_version if realtime_api_version else None,
+                tts_endpoint=tts_endpoint,
+            )
+        return await self._realtime_evaluator.evaluate_async(
+            model, evaluation_type
+        )
+
+    async def _submit_foundry_single(
+        self,
+        result: 'EvaluationResult',
+        evaluation_type: str,
+        model_name: str,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Submit a single model's results to Foundry and return (scores, meta)."""
+        meta: Dict[str, Any] = {'eval_id': None, 'run_id': None, 'report_url': None}
+        try:
+            res = await asyncio.to_thread(
+                self.foundry_evaluator.submit_evaluation,
+                raw_results=result.raw_results,
+                evaluation_type=evaluation_type,
+                model_name=model_name,
+                poll=True,
+            )
+            meta = {
+                'eval_id': res.get('eval_id'),
+                'run_id': res.get('run_id'),
+                'report_url': res.get('report_url'),
+                'status': res.get('status'),
+            }
+            return res.get('foundry_scores'), meta
+        except Exception as e:
+            logger.warning(f"Foundry submission failed for {model_name}: {e}")
+            return None, meta
+
+    def compare_full(
+        self,
+        model_a: str = "gpt4",
+        model_b: str = "gpt54"
+    ) -> Dict[str, ComparisonReport]:
+        """
+        Run full comparison across all evaluation types.
+        
+        Args:
+            model_a: First model name
+            model_b: Second model name
+            
+        Returns:
+            Dictionary of ComparisonReports by evaluation type
+        """
+        reports = {}
+        
+        for eval_type in ['classification', 'dialog', 'general', 'rag', 'tool_calling']:
+            reports[eval_type] = self.compare_models(
+                model_a, model_b, eval_type
+            )
+            
+        return reports
+        
+    def _run_evaluations(
+        self,
+        model_a: str,
+        model_b: str,
+        evaluation_type: str
+    ) -> Tuple[EvaluationResult, EvaluationResult]:
+        """Run evaluations for both models (sync wrapper)."""
+        return _run_in_loop(self._run_evaluations_async(model_a, model_b, evaluation_type))
+
+    async def _run_evaluations_async(
+        self,
+        model_a: str,
+        model_b: str,
+        evaluation_type: str
+    ) -> Tuple[EvaluationResult, EvaluationResult]:
+        """Run evaluations for both models, optionally in parallel.
+
+        Validates that both models share the same modality (text vs realtime).
+        """
+        self._validate_modality(model_a, model_b)
+
+        def _get_coro(model: str):
+            cfg = self.client.models.get(model)
+            if cfg and cfg.backend == "realtime":
+                return self._evaluate_realtime_model(model, evaluation_type)
+            if evaluation_type == "classification":
+                return self.evaluator.evaluate_classification_async(model)
+            elif evaluation_type == "dialog":
+                return self.evaluator.evaluate_dialog_async(model)
+            elif evaluation_type == "rag":
+                return self.evaluator.evaluate_rag_async(model)
+            elif evaluation_type == "tool_calling":
+                return self.evaluator.evaluate_tool_calling_async(model)
+            else:
+                return self.evaluator.evaluate_general_async(model)
+
+        if self.parallel_models:
+            logger.info(f"Running {evaluation_type} evaluation for {model_a} and {model_b} in parallel")
+            result_a, result_b = await asyncio.gather(
+                _get_coro(model_a),
+                _get_coro(model_b),
+            )
+        else:
+            logger.info(f"Running {evaluation_type} evaluation for {model_a} then {model_b} sequentially")
+            result_a = await _get_coro(model_a)
+            result_b = await _get_coro(model_b)
+
+        return result_a, result_b
+
+    def _validate_modality(self, model_a: str, model_b: str) -> None:
+        """Raise ``ValueError`` if models have different modalities.
+
+        Prevents comparing a text model against a realtime (S2S) model.
+        """
+        cfg_a = self.client.models.get(model_a)
+        cfg_b = self.client.models.get(model_b)
+        if cfg_a is None or cfg_b is None:
+            return  # let downstream code handle missing models
+        if cfg_a.modality != cfg_b.modality:
+            raise ValueError(
+                f"Cannot compare models of different modalities: "
+                f"{model_a} ({cfg_a.modality}) vs {model_b} ({cfg_b.modality}). "
+                f"Realtime (speech-to-speech) models can only be compared with "
+                f"other realtime models."
+            )
+
+    async def _run_foundry_parallel(
+        self,
+        result_a: EvaluationResult,
+        result_b: EvaluationResult,
+        evaluation_type: str,
+        model_a: str,
+        model_b: str,
+        foundry_meta: Dict[str, Any],
+    ) -> Tuple[Optional[Dict], Optional[Dict], Dict]:
+        """Submit both Foundry evaluations concurrently via a thread pool.
+
+        ``submit_evaluation`` is a blocking call (polls for completion), so
+        we run both inside ``asyncio.to_thread`` to overlap their I/O waits.
+        """
+        foundry_scores_a: Optional[Dict[str, Any]] = None
+        foundry_scores_b: Optional[Dict[str, Any]] = None
+
+        async def _submit(raw_results, model_name, meta_key):
+            try:
+                res = await asyncio.to_thread(
+                    self.foundry_evaluator.submit_evaluation,
+                    raw_results=raw_results,
+                    evaluation_type=evaluation_type,
+                    model_name=model_name,
+                    poll=True,
+                )
+                foundry_meta[meta_key] = {
+                    'eval_id': res.get('eval_id'),
+                    'run_id': res.get('run_id'),
+                    'report_url': res.get('report_url'),
+                    'status': res.get('status'),
+                }
+                return res.get('foundry_scores')
+            except Exception as e:
+                foundry_meta['errors'].append(f"{model_name}: {e}")
+                return None
+
+        logger.info(f"Submitting Foundry evaluations for {model_a} and {model_b} in parallel")
+        foundry_scores_a, foundry_scores_b = await asyncio.gather(
+            _submit(result_a.raw_results, model_a, 'model_a'),
+            _submit(result_b.raw_results, model_b, 'model_b'),
+        )
+
+        if foundry_scores_a is None:
+            foundry_meta['errors'].append(f"No Foundry scores returned for {model_a}.")
+        if foundry_scores_b is None:
+            foundry_meta['errors'].append(f"No Foundry scores returned for {model_b}.")
+        foundry_meta['completed'] = bool(foundry_scores_a and foundry_scores_b)
+
+        return foundry_scores_a, foundry_scores_b, foundry_meta
+        
+    def _generate_dimensions(
+        self,
+        result_a: EvaluationResult,
+        result_b: EvaluationResult,
+        evaluation_type: str,
+        foundry_scores_a: Optional[Dict[str, Any]] = None,
+        foundry_scores_b: Optional[Dict[str, Any]] = None,
+    ) -> List[ComparisonDimension]:
+        """Generate comparison dimensions from results"""
+        dimensions = []
+        
+        # Classification metrics
+        if result_a.classification_metrics and result_b.classification_metrics:
+            cm_a = result_a.classification_metrics
+            cm_b = result_b.classification_metrics
+            
+            dimensions.extend([
+                self._create_dimension("Accuracy", cm_a.accuracy, cm_b.accuracy, higher_better=True),
+                self._create_dimension("F1 Score", cm_a.f1_score, cm_b.f1_score, higher_better=True),
+                self._create_dimension("Precision", cm_a.precision, cm_b.precision, higher_better=True),
+                self._create_dimension("Recall", cm_a.recall, cm_b.recall, higher_better=True),
+            ])
+            
+            # NEW: Sub-field accuracy dimensions
+            if cm_a.subcategory_accuracy > 0 or cm_b.subcategory_accuracy > 0:
+                dimensions.append(
+                    self._create_dimension("Subcategory Accuracy", cm_a.subcategory_accuracy, cm_b.subcategory_accuracy, higher_better=True)
+                )
+            if cm_a.priority_accuracy > 0 or cm_b.priority_accuracy > 0:
+                dimensions.append(
+                    self._create_dimension("Priority Accuracy", cm_a.priority_accuracy, cm_b.priority_accuracy, higher_better=True)
+                )
+            if cm_a.sentiment_accuracy > 0 or cm_b.sentiment_accuracy > 0:
+                dimensions.append(
+                    self._create_dimension("Sentiment Accuracy", cm_a.sentiment_accuracy, cm_b.sentiment_accuracy, higher_better=True)
+                )
+            if cm_a.avg_confidence > 0 or cm_b.avg_confidence > 0:
+                dimensions.append(
+                    self._create_dimension("Avg Confidence", cm_a.avg_confidence, cm_b.avg_confidence, higher_better=True)
+                )
+
+        # Tool calling metrics (dedicated dataclass)
+        if result_a.tool_calling_metrics and result_b.tool_calling_metrics:
+            tc_a = result_a.tool_calling_metrics
+            tc_b = result_b.tool_calling_metrics
+            dimensions.extend([
+                self._create_dimension("Tool Selection Accuracy", tc_a.tool_selection_accuracy, tc_b.tool_selection_accuracy, higher_better=True),
+                self._create_dimension("Parameter Accuracy", tc_a.parameter_accuracy, tc_b.parameter_accuracy, higher_better=True),
+                self._create_dimension("Combined Accuracy", tc_a.combined_accuracy, tc_b.combined_accuracy, higher_better=True),
+            ])
+            
+        # Latency metrics
+        if result_a.latency_metrics and result_b.latency_metrics:
+            lm_a = result_a.latency_metrics
+            lm_b = result_b.latency_metrics
+            
+            dimensions.extend([
+                self._create_dimension("Mean Latency", lm_a.mean_latency, lm_b.mean_latency, higher_better=False),
+                self._create_dimension("P95 Latency", lm_a.p95_latency, lm_b.p95_latency, higher_better=False),
+                self._create_dimension("Latency Std Dev", lm_a.std_latency, lm_b.std_latency, higher_better=False),
+            ])
+            
+            # NEW: Cost & token dimensions
+            if lm_a.cost_per_request > 0 or lm_b.cost_per_request > 0:
+                dimensions.append(
+                    self._create_dimension("Cost/Request (USD)", lm_a.cost_per_request, lm_b.cost_per_request, higher_better=False)
+                )
+            if lm_a.cache_hit_rate > 0 or lm_b.cache_hit_rate > 0:
+                dimensions.append(
+                    self._create_dimension("Cache Hit Rate %", lm_a.cache_hit_rate, lm_b.cache_hit_rate, higher_better=True)
+                )
+            if lm_a.reasoning_token_pct > 0 or lm_b.reasoning_token_pct > 0:
+                dimensions.append(
+                    self._create_dimension("Reasoning Token %", lm_a.reasoning_token_pct, lm_b.reasoning_token_pct, higher_better=False)
+                )
+            if lm_a.tokens_per_second > 0 or lm_b.tokens_per_second > 0:
+                dimensions.append(
+                    self._create_dimension("Tokens/Second", lm_a.tokens_per_second, lm_b.tokens_per_second, higher_better=True)
+                )
+            
+        # Consistency metrics
+        if result_a.consistency_metrics and result_b.consistency_metrics:
+            cons_a = result_a.consistency_metrics
+            cons_b = result_b.consistency_metrics
+            
+            dimensions.extend([
+                self._create_dimension("Reproducibility", cons_a.reproducibility_score, cons_b.reproducibility_score, higher_better=True),
+                self._create_dimension("Format Consistency", cons_a.format_consistency, cons_b.format_consistency, higher_better=True),
+            ])
+            
+        # Quality metrics
+        if result_a.quality_metrics and result_b.quality_metrics:
+            qm_a = result_a.quality_metrics
+            qm_b = result_b.quality_metrics
+            
+            dimensions.extend([
+                self._create_dimension("Format Compliance", qm_a.format_compliance, qm_b.format_compliance, higher_better=True),
+                self._create_dimension("Completeness", qm_a.completeness, qm_b.completeness, higher_better=True),
+            ])
+            
+            if qm_a.groundedness > 0 or qm_b.groundedness > 0:
+                dimensions.append(
+                    self._create_dimension("Groundedness", qm_a.groundedness, qm_b.groundedness, higher_better=True)
+                )
+            if qm_a.follow_up_quality > 0 or qm_b.follow_up_quality > 0:
+                dimensions.append(
+                    self._create_dimension("Follow-up Quality", qm_a.follow_up_quality, qm_b.follow_up_quality, higher_better=True)
+                )
+            if qm_a.relevance > 0 or qm_b.relevance > 0:
+                dimensions.append(
+                    self._create_dimension("Context Coverage", qm_a.relevance, qm_b.relevance, higher_better=True)
+                )
+            if qm_a.rule_compliance > 0 or qm_b.rule_compliance > 0:
+                dimensions.append(
+                    self._create_dimension("Rule Compliance", qm_a.rule_compliance, qm_b.rule_compliance, higher_better=True)
+                )
+            if qm_a.empathy_score > 0 or qm_b.empathy_score > 0:
+                dimensions.append(
+                    self._create_dimension("Empathy Score", qm_a.empathy_score, qm_b.empathy_score, higher_better=True)
+                )
+            if qm_a.optimal_similarity > 0 or qm_b.optimal_similarity > 0:
+                dimensions.append(
+                    self._create_dimension("Optimal Similarity", qm_a.optimal_similarity, qm_b.optimal_similarity, higher_better=True)
+                )
+            if qm_a.resolution_efficiency > 0 or qm_b.resolution_efficiency > 0:
+                dimensions.append(
+                    self._create_dimension("Resolution Efficiency", qm_a.resolution_efficiency, qm_b.resolution_efficiency, higher_better=True)
+                )
+                
+        # Foundry LLM-as-judge metrics (1-5)
+        if foundry_scores_a and foundry_scores_b:
+            agg_a = foundry_scores_a.get('aggregated', {})
+            agg_b = foundry_scores_b.get('aggregated', {})
+            foundry_metrics = [
+                ('coherence', 'Coherence (Foundry)'),
+                ('fluency', 'Fluency (Foundry)'),
+                ('relevance', 'Relevance (Foundry)'),
+                ('similarity', 'Similarity (Foundry)'),
+                ('task_adherence', 'Task Adherence (Foundry)'),
+                ('intent_resolution', 'Intent Resolution (Foundry)'),
+                ('response_completeness', 'Response Completeness (Foundry)'),
+                ('groundedness', 'Groundedness (Foundry)'),
+                ('safety_violence', 'Safety: Violence (Foundry)'),
+                ('safety_hate_unfairness', 'Safety: Hate/Unfairness (Foundry)'),
+            ]
+            for key, label in foundry_metrics:
+                va = agg_a.get(key)
+                vb = agg_b.get(key)
+                if va is None or vb is None:
+                    continue
+                try:
+                    dimensions.append(
+                        self._create_dimension(label, float(va), float(vb), higher_better=True)
+                    )
+                except (TypeError, ValueError):
+                    continue
+
+        # Realtime (speech-to-speech) metrics
+        if result_a.realtime_metrics and result_b.realtime_metrics:
+            rt_a = result_a.realtime_metrics
+            rt_b = result_b.realtime_metrics
+            if rt_a.mean_time_to_first_audio_ms > 0 or rt_b.mean_time_to_first_audio_ms > 0:
+                dimensions.append(
+                    self._create_dimension("Time to First Audio (ms)", rt_a.mean_time_to_first_audio_ms, rt_b.mean_time_to_first_audio_ms, higher_better=False)
+                )
+            if rt_a.mean_session_time_ms > 0 or rt_b.mean_session_time_ms > 0:
+                dimensions.append(
+                    self._create_dimension("Mean Session Time (ms)", rt_a.mean_session_time_ms, rt_b.mean_session_time_ms, higher_better=False)
+                )
+            if rt_a.p95_session_time_ms > 0 or rt_b.p95_session_time_ms > 0:
+                dimensions.append(
+                    self._create_dimension("P95 Session Time (ms)", rt_a.p95_session_time_ms, rt_b.p95_session_time_ms, higher_better=False)
+                )
+            if rt_a.mean_ws_connect_time_ms > 0 or rt_b.mean_ws_connect_time_ms > 0:
+                dimensions.append(
+                    self._create_dimension("WS Connect Time (ms)", rt_a.mean_ws_connect_time_ms, rt_b.mean_ws_connect_time_ms, higher_better=False)
+                )
+            if rt_a.audio_cost_per_request > 0 or rt_b.audio_cost_per_request > 0:
+                dimensions.append(
+                    self._create_dimension("Audio Cost/Request (USD)", rt_a.audio_cost_per_request, rt_b.audio_cost_per_request, higher_better=False)
+                )
+            if rt_a.tts_cache_hit_rate > 0 or rt_b.tts_cache_hit_rate > 0:
+                dimensions.append(
+                    self._create_dimension("TTS Cache Hit Rate %", rt_a.tts_cache_hit_rate, rt_b.tts_cache_hit_rate, higher_better=True)
+                )
+
+        return dimensions
+        
+    def _create_dimension(
+        self,
+        name: str,
+        value_a: float,
+        value_b: float,
+        higher_better: bool
+    ) -> ComparisonDimension:
+        """Create a single comparison dimension"""
+        difference = value_b - value_a
+        
+        if value_a != 0:
+            percent_change = (difference / abs(value_a)) * 100
+        elif value_b != 0:
+            percent_change = 100.0
+        else:
+            percent_change = 0.0
+            
+        # Determine better model
+        if higher_better:
+            better = "model_b" if value_b > value_a else "model_a" if value_a > value_b else "tie"
+        else:
+            better = "model_a" if value_a < value_b else "model_b" if value_b < value_a else "tie"
+            
+        # Determine significance
+        abs_pct_change = abs(percent_change) / 100
+        if abs_pct_change >= self.thresholds['high']:
+            significance = 'high'
+        elif abs_pct_change >= self.thresholds['medium']:
+            significance = 'medium'
+        elif abs_pct_change >= self.thresholds['low']:
+            significance = 'low'
+        else:
+            significance = 'negligible'
+            
+        return ComparisonDimension(
+            dimension=name,
+            model_a_value=value_a,
+            model_b_value=value_b,
+            difference=difference,
+            percent_change=percent_change,
+            better_model=better,
+            significance=significance
+        )
+        
+    def _generate_summary(
+        self,
+        dimensions: List[ComparisonDimension],
+        model_a: str,
+        model_b: str
+    ) -> Dict[str, Any]:
+        """Generate summary statistics from dimensions"""
+        wins_a = sum(1 for d in dimensions if d.better_model == "model_a" and d.significance != 'negligible')
+        wins_b = sum(1 for d in dimensions if d.better_model == "model_b" and d.significance != 'negligible')
+        ties = len(dimensions) - wins_a - wins_b
+        
+        high_impact = [d for d in dimensions if d.significance == 'high']
+        
+        return {
+            'total_dimensions': len(dimensions),
+            f'{model_a}_wins': wins_a,
+            f'{model_b}_wins': wins_b,
+            'ties': ties,
+            'high_impact_dimensions': [d.dimension for d in high_impact],
+            'overall_winner': model_a if wins_a > wins_b else model_b if wins_b > wins_a else 'tie'
+        }
+        
+    def _evaluate_migration_readiness(
+        self,
+        result_b: EvaluationResult,
+        evaluation_type: str,
+        model_b: str,
+    ) -> Dict[str, Any]:
+        """Evaluate model_b against acceptance thresholds for migration readiness.
+
+        Returns a dict with:
+          - verdict: 'PASS' | 'FAIL' | 'NOT_CONFIGURED'
+          - checks: list of per-metric check results
+          - thresholds_used: the raw threshold dict
+        """
+        thresholds = self.acceptance_thresholds.get(evaluation_type)
+        if not thresholds:
+            return {'verdict': 'NOT_CONFIGURED', 'checks': [], 'thresholds_used': {}}
+
+        checks: List[Dict[str, Any]] = []
+        all_pass = True
+
+        # Map threshold keys to actual metric values from EvaluationResult
+        metric_extractors = {
+            'accuracy': lambda r: getattr(r.classification_metrics, 'accuracy', None) if r.classification_metrics else None,
+            'consistency': lambda r: getattr(r.consistency_metrics, 'reproducibility_score', None) if r.consistency_metrics else None,
+            'quality_score': lambda r: getattr(r.quality_metrics, 'instruction_following', None) if r.quality_metrics else None,
+            'groundedness': lambda r: getattr(r.quality_metrics, 'groundedness', None) if r.quality_metrics else None,
+            'relevance': lambda r: getattr(r.quality_metrics, 'relevance', None) if r.quality_metrics else None,
+            'tool_selection_accuracy': lambda r: getattr(r.classification_metrics, 'f1_score', None) if r.classification_metrics else None,
+            'parameter_accuracy': lambda r: getattr(r.classification_metrics, 'precision', None) if r.classification_metrics else None,
+            'max_latency_ms': lambda r: (getattr(r.latency_metrics, 'mean_latency', None) or 0) * 1000 if r.latency_metrics else None,
+        }
+
+        for metric_key, threshold_val in thresholds.items():
+            extractor = metric_extractors.get(metric_key)
+            actual = extractor(result_b) if extractor else None
+
+            if actual is None:
+                checks.append({
+                    'metric': metric_key,
+                    'threshold': threshold_val,
+                    'actual': None,
+                    'passed': None,
+                    'reason': 'metric not available',
+                })
+                continue
+
+            # For latency, lower is better
+            if 'latency' in metric_key:
+                passed = actual <= threshold_val
+            else:
+                passed = actual >= threshold_val
+
+            if not passed:
+                all_pass = False
+
+            checks.append({
+                'metric': metric_key,
+                'threshold': threshold_val,
+                'actual': round(actual, 4),
+                'passed': passed,
+            })
+
+        return {
+            'verdict': 'PASS' if all_pass else 'FAIL',
+            'model': model_b,
+            'evaluation_type': evaluation_type,
+            'checks': checks,
+            'thresholds_used': thresholds,
+        }
+
+    def _generate_recommendations(
+        self,
+        dimensions: List[ComparisonDimension],
+        result_a: EvaluationResult,
+        result_b: EvaluationResult,
+        model_a: str,
+        model_b: str
+    ) -> List[str]:
+        """Generate actionable recommendations from comparison"""
+        recommendations = []
+        
+        # Check accuracy improvements
+        accuracy_dims = [d for d in dimensions if 'accuracy' in d.dimension.lower() or 'f1' in d.dimension.lower()]
+        for dim in accuracy_dims:
+            if dim.significance in ['high', 'medium'] and dim.better_model == 'model_b':
+                recommendations.append(
+                    f"Consider migrating to {model_b} for improved {dim.dimension} "
+                    f"({dim.percent_change:+.1f}% improvement)"
+                )
+                
+        # Check latency concerns
+        latency_dims = [d for d in dimensions if 'latency' in d.dimension.lower()]
+        for dim in latency_dims:
+            if dim.significance in ['high', 'medium'] and dim.better_model == 'model_a':
+                recommendations.append(
+                    f"Note: {model_b} shows increased {dim.dimension} "
+                    f"({abs(dim.percent_change):.1f}% slower). Consider caching strategies."
+                )
+                
+        # Check consistency
+        consistency_dims = [d for d in dimensions if 'reproducibility' in d.dimension.lower() or 'consistency' in d.dimension.lower()]
+        for dim in consistency_dims:
+            if dim.significance in ['high', 'medium']:
+                better = model_b if dim.better_model == 'model_b' else model_a
+                recommendations.append(
+                    f"{better} shows better {dim.dimension} - important for production stability"
+                )
+                
+        # General migration recommendation
+        if not recommendations:
+            recommendations.append(
+                "Models show similar performance. Consider cost and feature requirements for decision."
+            )
+
+        # Foundry-specific recommendations
+        foundry_dims = [d for d in dimensions if d.dimension.endswith('(Foundry)')]
+        high_impact_foundry = [d for d in foundry_dims if d.significance in ['high', 'medium']]
+        for d in high_impact_foundry[:2]:
+            if d.better_model == 'tie':
+                continue
+            better = model_b if d.better_model == 'model_b' else model_a
+            metric_name = d.dimension.replace(' (Foundry)', '')
+            recommendations.append(
+                f"Foundry judges rate {better} higher on {metric_name} ({d.percent_change:+.1f}%)."
+            )
+
+        # ── Migration best practices ──────────────────────────────────
+        recommendations.append("")  # separator
+        recommendations.append("📋 MIGRATION BEST PRACTICES:")
+        recommendations.append(
+            "Use 'developer' role instead of 'system' for newer-generation models "
+            "(auto-applied by this framework when model_family is 'gpt5')."
+        )
+        recommendations.append(
+            "Use 'max_completion_tokens' instead of 'max_tokens' for new-generation models "
+            "(o-series, reasoning models, model-router)."
+        )
+        recommendations.append(
+            "Set 'reasoning_effort' (low/medium/high) on reasoning models to control "
+            "latency vs quality trade-off."
+        )
+        recommendations.append(
+            "Consider using 'model-router' deployment for automatic model selection "
+            "based on query complexity."
+        )
+        recommendations.append(
+            "Use Structured Outputs (response_format: json_schema) instead of json_object "
+            "for guaranteed schema compliance."
+        )
+        recommendations.append(
+            "Migrate authentication from API keys to Microsoft Entra ID (DefaultAzureCredential) "
+            "for production deployments."
+        )
+        recommendations.append(
+            "Evaluate RAG groundedness and tool-calling accuracy as part of migration testing "
+            "to cover agentic patterns."
+        )
+        recommendations.append(
+            "Define acceptance thresholds (e.g., accuracy ≥ 0.85, latency ≤ 5s) for automated "
+            "PASS/FAIL migration decisions."
+        )
+            
+        return recommendations
+        
+    def generate_detailed_report(
+        self,
+        comparison: ComparisonReport
+    ) -> str:
+        """
+        Generate a detailed text report from comparison.
+        
+        Args:
+            comparison: ComparisonReport to format
+            
+        Returns:
+            Formatted report string
+        """
+        report = comparison.to_markdown()
+        
+        # Add raw result samples
+        if comparison.raw_results_a and comparison.raw_results_b:
+            report += "\n## Sample Result Comparisons\n\n"
+            
+            for i, (res_a, res_b) in enumerate(zip(
+                comparison.raw_results_a[:3], 
+                comparison.raw_results_b[:3]
+            )):
+                report += f"### Sample {i+1}\n\n"
+                report += f"**Input:** {res_a.get('input', res_a.get('prompt', 'N/A'))[:100]}...\n\n"
+                report += f"**{comparison.model_a}:** {res_a.get('predicted', res_a.get('response', {}))}\n\n"
+                report += f"**{comparison.model_b}:** {res_b.get('predicted', res_b.get('response', {}))}\n\n"
+                
+        return report
+
+
+# Example usage
+if __name__ == "__main__":
+    print("Model Comparator Module")
+    print("=" * 50)
+    print("\nUsage:")
+    print("  comparator = ModelComparator(client)")
+    print("  report = comparator.compare_models('gpt4', 'gpt54', 'classification')")
+    print("  print(report.to_markdown())")

@@ -1,0 +1,421 @@
+# =============================================================================
+# Azure OpenAI Model Migration - Configuration Settings
+# =============================================================================
+# Copy this file to settings.yaml and update with your credentials
+
+azure:
+  # Azure OpenAI / AI Foundry Configuration
+  endpoint: "${AZURE_OPENAI_ENDPOINT}"  # Use environment variable
+  # Authentication: Entra ID via DefaultAzureCredential (recommended).
+  # In Azure Container Apps the User-Assigned Managed Identity is used
+  # automatically via the AZURE_CLIENT_ID env var set by Bicep.
+  # For local development, run 'az login' — no API key needed.
+  # To use an API key as fallback, set AZURE_OPENAI_API_KEY env var.
+  api_key: "${AZURE_OPENAI_API_KEY}"    # Use environment variable
+  api_version: "2025-04-01-preview"
+  
+  # Model Deployments
+  # Each model needs a unique key (used as directory name and API identifier).
+  # model_family determines prompt-style guidance (e.g. "gpt4", "gpt5").
+  models:
+    gpt4:
+      deployment_name: "gpt-4.1"
+      model_family: "gpt4"
+      model_version: "2024-08-06"
+      max_tokens: 4096
+      temperature: 0.1  # Low for reproducibility
+
+    gpt4o:
+      deployment_name: "gpt-4o"
+      model_family: "gpt4"
+      model_version: "2024-08-06"
+      max_tokens: 4096
+      temperature: 0.1
+
+    gpt41_mini:
+      deployment_name: "gpt-4.1-mini"
+      model_family: "gpt4"
+      model_version: "2025-04-14"
+      max_tokens: 16384
+      temperature: 0.1
+
+    gpt54:
+      deployment_name: "gpt-5.4"
+      model_family: "gpt5"
+      model_version: "2026-03-05"
+      max_tokens: 8192
+      temperature: 0.1
+
+    gpt54_mini:
+      deployment_name: "gpt-5.4-mini"
+      model_family: "gpt5"
+      model_version: "2026-03-05"
+      max_tokens: 16384
+      temperature: 0.1
+      
+    gpt51:
+      deployment_name: "gpt-5.1"
+      model_family: "gpt5"
+      model_version: "2025-01-01"
+      max_tokens: 16384
+      temperature: 0.1
+
+    gpt52:
+      deployment_name: "gpt-5.2"
+      model_family: "gpt5"
+      model_version: "2025-01-01"
+      max_tokens: 16384
+      temperature: 0.1
+
+    gpt5_reasoning:
+      deployment_name: "gpt-5.1"
+      model_family: "gpt5"
+      model_version: "2025-01-01"
+      max_tokens: 16384
+      reasoning_effort: "medium"  # low, medium, high
+
+    mistral_large_3:
+      deployment_name: "Mistral-Large-3"
+      model_family: "mistral"
+      model_version: "2025-03-01"
+      max_tokens: 8192
+      temperature: 0.1
+
+    # gemini3_flash:
+    #   deployment_name: "gemini-3-flash-preview"
+    #   model_family: "gemini"
+    #   backend: "gemini"                       # uses OpenAI-compat Gemini endpoint
+    #   model_version: "2025-06-01"
+    #   max_tokens: 8192
+    #   temperature: 0.1
+    #   max_concurrent: 1                       # Gemini free tier: 5 RPM, ~20 RPD — sequential to avoid 429
+
+    # ── Microsoft Phi (SLM) ────────────────────────────────────────
+    phi4:
+      deployment_name: "Phi-4"
+      model_family: "phi"
+      model_version: "2024-12-12"
+      max_tokens: 4096
+      temperature: 0.1
+
+    # ── Speech-to-Speech (Realtime API) ────────────────────────────
+    gpt_realtime_1:
+      deployment_name: "gpt-realtime"
+      model_family: "realtime"
+      backend: "realtime"
+      model_version: "2025-08-28"
+      max_tokens: 4096
+      temperature: 0.8
+      voice: "alloy"
+      turn_detection: "server_vad"
+      max_concurrent: 2                       # Realtime sessions are expensive — limit concurrency
+
+    gpt_realtime_15:
+      deployment_name: "gpt-realtime-1.5"
+      model_family: "realtime"
+      backend: "realtime"
+      model_version: "2026-02-23"
+      max_tokens: 4096
+      temperature: 0.8
+      voice: "alloy"
+      turn_detection: "server_vad"
+      max_concurrent: 2
+
+# =============================================================================
+# Realtime / Speech-to-Speech Configuration (optional)
+# =============================================================================
+# Voice models (TTS + Realtime) can run on a SEPARATE Azure OpenAI endpoint
+# to avoid quota contention with text models.  If omitted the main azure.*
+# endpoint is used.  Auth is always via Entra ID (DefaultAzureCredential).
+realtime:
+  # Optional dedicated endpoint for Realtime API voice models (WebSocket).
+  # Leave empty / remove to reuse the main azure.endpoint.
+  endpoint: "${AZURE_OPENAI_REALTIME_ENDPOINT}"
+  api_version: "2025-04-01-preview"
+
+  # Optional separate endpoint for TTS synthesis.
+  # When voice models are split across accounts (e.g. gpt-4o-mini-tts on the
+  # primary account, gpt-realtime on a dedicated account), set this to the
+  # endpoint hosting the TTS model.  Leave empty to reuse the realtime endpoint,
+  # or the main endpoint if no realtime endpoint is configured either.
+  tts_endpoint: "${AZURE_OPENAI_TTS_ENDPOINT}"
+
+  # TTS model used to convert text test-cases to audio before sending
+  # to the Realtime API.  Must be deployed on the realtime endpoint
+  # (or the main endpoint if no separate endpoint is configured).
+  tts:
+    deployment_name: "gpt-4o-mini-tts"
+    voice: "alloy"                          # default voice for TTS synthesis
+    speed: 1.0
+    response_format: "pcm"                  # "pcm" → raw PCM16 24 kHz mono
+    cache_enabled: true
+    cache_dir: ".cache/tts_audio"
+
+# =============================================================================
+# Google Gemini Configuration (optional — only needed if using Gemini models)
+# =============================================================================
+gemini:
+  api_key: "${GEMINI_API_KEY}"              # Get from https://aistudio.google.com/
+
+# =============================================================================
+# Microsoft Foundry Control Plane Evaluation (optional)
+# =============================================================================
+foundry:
+  # Project endpoint from Azure AI Foundry portal → Project → Overview
+  project_endpoint: "${FOUNDRY_PROJECT_ENDPOINT}"   # e.g. https://<name>.services.ai.azure.com/api/projects/<project>
+  # Deployment used as LLM judge for quality evaluations
+  judge_deployment: "gpt-5.2"   # e.g. gpt-4.1 (must be deployed in the Foundry project)
+  # Model used inside score_model graders (must be a supported grader model:
+  # gpt-4.1, gpt-4o, gpt-4.1-mini, o3-mini, o4-mini, etc.)
+  grader_model: "gpt-4.1"
+  # Include safety evaluators (safety_violence, safety_hate_unfairness).
+  # These prompts can trigger Azure OpenAI content filters and cause the
+  # Foundry internal eval run to fail with InternalServerError.
+  # If Foundry evals fail repeatedly, try setting this to false.
+  include_safety_evaluators: true
+  # Timeout (seconds) for each Foundry eval run polling cycle.
+  # With 7 evaluators × 20 rows and two models running in parallel,
+  # runs typically complete in 150-350s.  Default: 600.
+  timeout: 600
+
+# =============================================================================
+# Cost Rates (USD per 1K tokens)
+# =============================================================================
+# Single source of truth used by MetricsCalculator and the /api routes.
+# Add entries for every model key; unknown models fall back to "default".
+cost_rates:
+  default:
+    input: 0.0025
+    output: 0.01
+    cached_input: 0.00125
+  gpt4:
+    input: 0.0025
+    output: 0.01
+    cached_input: 0.00125
+  gpt4o:
+    input: 0.0025
+    output: 0.01
+    cached_input: 0.00125
+  gpt41_mini:
+    input: 0.0004
+    output: 0.0016
+    cached_input: 0.0001
+  gpt54:
+    input: 0.005
+    output: 0.02
+    cached_input: 0.0025
+    reasoning: 0.015
+  gpt54_mini:
+    input: 0.0004
+    output: 0.0016
+    cached_input: 0.0002
+  gpt51:
+    input: 0.005
+    output: 0.02
+    cached_input: 0.0025
+    reasoning: 0.015
+  gpt5_reasoning:
+    input: 0.005
+    output: 0.02
+    cached_input: 0.0025
+    reasoning: 0.015
+  mistral_large_3:
+    input: 0.002
+    output: 0.006
+    cached_input: 0.001
+  gemini3_flash:
+    input: 0.00015
+    output: 0.0006
+    cached_input: 0.0000375
+  phi4:
+    input: 0.00014
+    output: 0.00056
+    cached_input: 0.00007
+  gpt_realtime_1:
+    input: 0.005
+    output: 0.02
+    cached_input: 0.0025
+    audio_input: 0.06
+    audio_output: 0.24
+  gpt_realtime_15:
+    input: 0.0006
+    output: 0.0024
+    cached_input: 0.0003
+    audio_input: 0.01
+    audio_output: 0.04
+
+# =============================================================================
+# Evaluation Settings
+# =============================================================================
+evaluation:
+  # Number of runs per test case for consistency measurement
+  consistency_runs: 5
+  
+  # Timeout settings (seconds)
+  request_timeout: 60
+  total_timeout: 300
+  
+  # Batch processing
+  batch_size: 10
+  parallel_requests: 5
+  
+  # Performance — parallel execution
+  # max_concurrent_requests: semaphore limit for async API calls within a
+  #   single evaluation.  Tune based on your Azure OpenAI RPM/TPM tier.
+  max_concurrent_requests: 5
+  # parallel_models: when comparing two models, evaluate both simultaneously
+  parallel_models: true
+  
+  # Test data generation — number of synthetic scenarios per type
+  test_data_counts:
+    classification: 20
+    dialog: 15
+    general: 15
+    rag: 10
+    tool_calling: 10
+
+  # Output settings
+  results_dir: "data/results"
+  save_responses: true
+  
+  # Metrics to compute
+  metrics:
+    - accuracy
+    - consistency
+    - latency
+    - token_usage
+    - cost
+
+  # Acceptance thresholds — PASS / FAIL gates for migration readiness
+  acceptance_thresholds:
+    classification:
+      accuracy: 0.90
+      consistency: 0.85
+      max_latency_ms: 3000
+    dialog:
+      quality_score: 0.80
+      consistency: 0.80
+      max_latency_ms: 5000
+    rag:
+      groundedness: 0.85
+      relevance: 0.80
+      max_latency_ms: 5000
+    tool_calling:
+      tool_selection_accuracy: 0.90
+      parameter_accuracy: 0.85
+      max_latency_ms: 4000
+    general:
+      quality_score: 0.75
+      max_latency_ms: 5000
+
+# =============================================================================
+# Caching Configuration
+# =============================================================================
+caching:
+  enabled: true
+  cache_dir: ".cache/prompts"
+  ttl_seconds: 86400  # 24 hours
+  
+  # Prompt caching for Azure OpenAI
+  prompt_caching:
+    enabled: true
+    min_prefix_length: 1024  # Minimum tokens for cache benefit
+
+# =============================================================================
+# Security Settings
+# =============================================================================
+security:
+  # Content filtering
+  content_filter:
+    enabled: true
+    categories:
+      - hate
+      - sexual
+      - violence
+      - self_harm
+  
+  # PII handling
+  pii_detection:
+    enabled: true
+    redact_in_logs: true
+    
+  # Sandbox tools
+  code_interpreter:
+    enabled: false  # Enable only when needed
+    timeout: 30
+    
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  level: "INFO"
+  format: "json"
+  file: "logs/migration_eval.log"
+  
+  # Diagnostic logging for SDK
+  sdk_diagnostics:
+    enabled: true
+    log_threshold_ms: 1000  # Log slow requests
+
+# =============================================================================
+# Web Interface Settings
+# =============================================================================
+web:
+  host: "127.0.0.1"
+  port: 5000
+  debug: false
+  
+  # CORS settings
+  cors:
+    origins:
+      - "http://localhost:3000"
+      - "http://127.0.0.1:5000"
+
+# =============================================================================
+# Authentication Settings
+# =============================================================================
+auth:
+  # Email provider: "smtp", "msgraph" or "console"
+  # (console prints codes to stdout for dev)
+  # ➜ Controlled via env var AUTH_EMAIL_PROVIDER (default: "console").
+  #   Change from Azure Portal → Container App → Environment variables.
+  email_provider: "${AUTH_EMAIL_PROVIDER}"
+
+  # Code verification: when false, users authenticate with just their email
+  # (no OTP code is generated or sent). Useful for dev/demo environments.
+  # ➜ Controlled via env var AUTH_CODE_VERIFICATION (default: true).
+  #   Change from Azure Portal → Container App → Environment variables.
+  code_verification: "${AUTH_CODE_VERIFICATION}"
+
+  # EasyAuth auto-login: when true (default), the app will automatically
+  # sign in users whose identity is provided by Azure Container Apps
+  # built-in authentication (EasyAuth).  The sidecar injects the header
+  # X-MS-CLIENT-PRINCIPAL-NAME with the user's email on every request.
+  # Set to false to ignore EasyAuth headers and always show the login page.
+  # ➜ Controlled via env var AUTH_EASYAUTH_AUTO_LOGIN (default: true).
+  easyauth_auto_login: "${AUTH_EASYAUTH_AUTO_LOGIN}"
+
+  # Session lifetime in seconds (default: 8 hours)
+  session_ttl_seconds: 28800
+
+  # OTP code settings
+  code_length: 6
+  code_ttl_seconds: 300   # 5 minutes
+  max_attempts: 3
+
+  # SMTP settings (used when email_provider is "smtp")
+  smtp:
+    host: "${SMTP_HOST}"             # e.g. smtp.office365.com or smtp.gmail.com
+    port: 587
+    username: "${SMTP_USERNAME}"     # e.g. noreply@yourdomain.com
+    password: "${SMTP_PASSWORD}"     # App password or SMTP credential
+    use_tls: true
+    sender: "${SMTP_FROM_EMAIL}"     # Sender address (defaults to username if empty)
+
+  # Microsoft Graph API settings (used when email_provider is "msgraph")
+  # Requires Azure AD app with Mail.Send application permission.
+  # Auth via DefaultAzureCredential (Managed Identity in Azure, az login locally).
+  msgraph:
+    sender: "${MSGRAPH_FROM_EMAIL}"    # Mailbox to send from (e.g. noreply@yourdomain.com)
+    tenant_id: "${AZURE_TENANT_ID}"    # Optional — Azure AD tenant ID
+    client_id: "${AZURE_CLIENT_ID}"    # Optional — App/Managed Identity client ID

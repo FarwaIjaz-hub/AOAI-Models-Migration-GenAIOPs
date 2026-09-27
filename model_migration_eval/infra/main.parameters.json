@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "webImageName": {
+      "value": "${SERVICE_WEB_IMAGE_NAME}"
+    },
+    "smtpHost": {
+      "value": "${SMTP_HOST}"
+    },
+    "smtpUsername": {
+      "value": "${SMTP_USERNAME}"
+    },
+    "smtpPassword": {
+      "value": "${SMTP_PASSWORD}"
+    },
+    "smtpFromEmail": {
+      "value": "${SMTP_FROM_EMAIL}"
+    },
+    "authCodeVerification": {
+      "value": "${AUTH_CODE_VERIFICATION}"
+    },
+    "authEmailProvider": {
+      "value": "${AUTH_EMAIL_PROVIDER}"
+    },
+    "flaskSecretKey": {
+      "value": "${FLASK_SECRET_KEY}"
+    },
+    "geminiApiKey": {
+      "value": "${GEMINI_API_KEY}"
+    },
+    "realtimeLocation": {
+      "value": "swedencentral"
+    },
+    "deployVoiceModels": {
+      "value": "true"
+    },
+    "authEasyAuthAutoLogin": {
+      "value": "${AUTH_EASYAUTH_AUTO_LOGIN}"
+    },
+    "enableAutoAssignFoundryReader": {
+      "value": "${ENABLE_AUTO_ASSIGN_FOUNDRY_READER}"
+    },
+    "deployerPrincipalId": {
+      "value": "${DEPLOYER_PRINCIPAL_ID}"
+    }
+  }
+}

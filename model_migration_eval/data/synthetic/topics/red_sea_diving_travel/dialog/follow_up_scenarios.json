@@ -1,0 +1,122 @@
+[
+  {
+    "id": "DLG_001",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"Hi, do you have any Red Sea liveaboards in October for 2 divers? We’re thinking Brothers/Daedalus/Elphinstone but flexible if the price is better.\"}]",
+    "context_gaps": "preferred departure week in October | budget per person | cabin type and departure port",
+    "optimal_follow_up": "Absolutely, I can check October Red Sea liveaboard options for 2 divers. To narrow down the best availability and pricing, please tell me your preferred departure week, your approximate budget per person, and whether you want a twin cabin, double cabin, or are open to shared accommodation. Also let me know if you prefer departures from Hurghada, Port Ghalib, or either. Once I have that, I can suggest the most suitable BDE and alternative route options.",
+    "follow_up_rules": "Ask only for details needed to quote accurately | Mention route and port options relevant to the Red Sea | Avoid promising availability before checking live inventory",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_002",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"We want to book a week in Marsa Alam in May with shore diving and maybe one day boat trip.\"},{\"role\":\"agent\",\"message\":\"That sounds great. We can help with resort-based diving packages in Marsa Alam.\"},{\"role\":\"customer\",\"message\":\"Can you make it family-friendly? My partner dives, I snorkel, and our 12-year-old wants to try diving if possible.\"}]",
+    "context_gaps": "exact travel dates in May | room setup and board basis | child diving certification or try-dive preference",
+    "optimal_follow_up": "Yes, we can tailor a Marsa Alam package for a mixed family trip. To build the right option, please share your exact May travel dates, how many rooms you need and your preferred meal plan, and whether your 12-year-old wants a supervised introductory dive or already has a junior certification. I’ll also check which resorts offer good house-reef snorkeling, family-friendly facilities, and a dive center that can arrange a day boat for your partner.",
+    "follow_up_rules": "Acknowledge mixed diver/non-diver needs | Check child age and diving status before confirming activities | Offer customized package rather than a one-size-fits-all quote",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_003",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"I paid the deposit for our Red Sea trip last week but haven’t received a receipt yet. Also, can I pay the balance by bank transfer instead of card?\"}]",
+    "context_gaps": "booking reference | payer name and payment date | departure date and balance due date",
+    "optimal_follow_up": "Of course, I can help with that. Please send your booking reference, the lead passenger name, and the date the deposit was paid so I can locate the file and confirm the receipt status. We can usually advise on bank transfer for the balance as well, but I’ll need to check your departure date and balance due date first because transfer timing can matter close to travel.",
+    "follow_up_rules": "Verify booking before discussing payment specifics | Mention timing sensitivity for bank transfers | Do not confirm receipt issuance without checking records",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_004",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"We’re booked on a liveaboard from Hurghada next month, but one of our group may need to cancel because of surgery. What are the options?\"}]",
+    "context_gaps": "booking reference | number of passengers affected | whether travel insurance is in place",
+    "optimal_follow_up": "I’m sorry to hear that. Please send your booking reference and let me know which passenger may need to cancel, whether the rest of the group still plans to travel, and if they have travel insurance that may cover medical cancellation. Once I check the booking terms, I can explain the cancellation charges, whether a name change is possible, and any options to minimize costs.",
+    "follow_up_rules": "Lead with empathy for medical situation | Gather booking and insurance details before quoting penalties | Explore alternatives such as name change if permitted",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_005",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"I’m a UK passport holder flying to Egypt for a Red Sea dive holiday. Do I need a visa in advance, and is 5 months validity on my passport enough?\"}]",
+    "context_gaps": "destination airport and resort/liveaboard area | exact passport expiry date | nationality and any non-UK residency complications",
+    "optimal_follow_up": "I can help with the general requirements, but I want to make sure you don’t face any travel issues. Please confirm your exact arrival airport in Egypt, your passport expiry date, and whether you are traveling solely on a UK passport. For many Red Sea trips, visa rules can depend on route and entry point, and passport validity is critical. Once you confirm those details, I’ll outline the likely requirements and strongly recommend checking the latest official government and airline guidance before departure.",
+    "follow_up_rules": "Do not give definitive immigration advice without key travel details | Flag passport validity as a potential travel risk | Direct customer to official sources for final confirmation",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_006",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"Our flight lands in Hurghada at 23:40. If we book the liveaboard with you, is the airport transfer included and where do we meet the driver?\"},{\"role\":\"agent\",\"message\":\"Transfers are often included or can be arranged depending on the boat and package.\"},{\"role\":\"customer\",\"message\":\"We’re worried because it’s a late arrival and we have dive bags.\"}]",
+    "context_gaps": "boat name or booking reference | number of passengers and bags | whether arrival is same day as embarkation",
+    "optimal_follow_up": "That’s completely understandable, especially with a late arrival and dive gear. Please send your boat name or booking reference, your flight details, and how many passengers and large bags you’ll have. I’ll confirm whether the Hurghada airport transfer is included, the exact meeting procedure, and whether the driver will wait inside arrivals or outside the terminal. If your arrival is close to embarkation cut-off, I’ll also check whether any special coordination is needed.",
+    "follow_up_rules": "Reassure customer about late-night logistics | Confirm inclusion and meeting instructions only after checking booking/package | Assess timing risk if arrival is near embarkation deadline",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_007",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"Can you tell me what the cabins are like on Red Sea liveaboards? My wife gets seasick and wants an ensuite lower-deck cabin if possible.\"}]",
+    "context_gaps": "specific boat or route of interest | travel month | cabin occupancy preference",
+    "optimal_follow_up": "Yes, cabin layout can make a big difference for comfort. If you tell me which boat or route you’re considering, your travel month, and whether you want a double or twin setup, I can recommend the most suitable ensuite lower-deck options. I can also point out which boats are generally more stable in rougher conditions and whether there are any midship cabins available, which some guests prefer if they’re prone to seasickness.",
+    "follow_up_rules": "Focus on practical cabin and comfort details | Avoid generic claims because layouts vary by vessel | Mention stability and cabin location sensitively",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_008",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"I have Open Water with 18 logged dives. Can I join a Brothers/Daedalus/Elphinstone safari, and do I need to bring my own SMB and reef hook?\"}]",
+    "context_gaps": "date of last dive | comfort in currents and deep diving | rental needs for missing equipment",
+    "optimal_follow_up": "Thanks, that helps. BDE routes are often best suited to divers with more experience because conditions can include strong currents, blue-water entries, and deeper profiles. Please tell me when your last dive was, how comfortable you are with currents, and whether you would need to rent any equipment. I can then advise whether this route is appropriate or whether a northern or easier southern itinerary would be safer and more enjoyable. For equipment, SMBs are strongly recommended and reef hook policies can vary by operator and site briefing, so I’ll check the specific boat’s requirements.",
+    "follow_up_rules": "Prioritize suitability and safety over making the sale | Assess recent experience, not just certification level | Clarify operator-specific equipment requirements",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_009",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"We’re thinking of the Red Sea in August. Is it too hot, and which route usually has the best chance of good visibility and less rough crossings?\"}]",
+    "context_gaps": "departure port preference | diver experience level | liveaboard versus resort-based diving preference",
+    "optimal_follow_up": "August can be excellent for Red Sea diving, but it is very hot on land and conditions vary by route. To recommend the best option, please tell me whether you prefer a liveaboard or resort-based trip, your diving experience level, and whether you’d rather depart from Hurghada or Port Ghalib if doing a safari. In general, I can then compare likely sea conditions, crossing exposure, water temperature, and visibility expectations for northern wreck routes versus southern offshore itineraries.",
+    "follow_up_rules": "Set realistic expectations about heat and sea conditions | Tailor route advice to experience and trip style | Avoid guaranteeing weather or visibility",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_010",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"I’m diabetic and want to do a Red Sea liveaboard. Is that allowed? I also take medication that needs to stay cool.\"}]",
+    "context_gaps": "type of diabetes and control status | diving medical clearance status | specific boat and storage needs for medication",
+    "optimal_follow_up": "Thanks for raising this before booking. Diving with diabetes may be possible in some cases, but it depends on your medical history, control, and the operator’s policy. Please let me know whether you use insulin, whether you have a recent fit-to-dive medical clearance from a diving doctor, and which trip you’re considering. I’ll also check whether the boat can safely store temperature-sensitive medication. Because this involves health and diving safety, we may need medical approval before confirming the booking.",
+    "follow_up_rules": "Treat medical disclosure seriously and non-judgmentally | Request medical clearance details before confirming suitability | Check practical onboard medication storage arrangements",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_011",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"We’re already on the boat and my rental BCD keeps leaking. I told the guide this morning but it’s still not sorted and I’ve missed a dive.\"}]",
+    "context_gaps": "boat name and cabin/booking name | whether issue is ongoing and affects safety | what resolution has already been offered onboard",
+    "optimal_follow_up": "I’m sorry you’re dealing with that onboard. Your safety and dive time matter. Please send the boat name, the lead booking name or cabin number, and confirm whether the BCD issue is still unresolved right now. Also let me know what the crew has offered so far, such as a replacement unit or repair attempt. I’ll escalate this immediately with the operator and ask for a safe replacement and a clear update on how they plan to address the missed dive.",
+    "follow_up_rules": "Prioritize immediate safety and active trip resolution | Gather enough details to escalate quickly | Do not advise customer to continue diving with faulty equipment",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_012",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"We got back from our Red Sea trip last week. The cabin AC barely worked for 3 nights and one of the promised dive sites was skipped. How do I make a complaint?\"}]",
+    "context_gaps": "booking reference | whether issues were reported during trip | what remedy if any was offered onsite",
+    "optimal_follow_up": "I’m sorry to hear the trip didn’t meet expectations. Please send your booking reference, the boat name, and a brief timeline of the AC issue and the skipped dive site, including whether you reported both problems to the crew or tour leader during the trip and what response you received. If you have photos or written notes, those can help. Once I have that, I’ll explain the complaint process and review whether compensation or another remedy may be appropriate under the booking terms.",
+    "follow_up_rules": "Acknowledge dissatisfaction without admitting liability prematurely | Request evidence and reporting history | Explain complaint pathway clearly and professionally",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_013",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"I’ve booked with you twice before for Egypt. Do you offer repeat guest discounts or any deals if I bring 4 friends on a liveaboard next spring?\"}]",
+    "context_gaps": "previous booking details or customer record | target travel month and route | whether group wants to book together under one lead name",
+    "optimal_follow_up": "Thanks for coming back to us. We really appreciate repeat guests. Please share your previous booking name or references, your preferred month next spring, and which Red Sea route you’re considering. Also let me know if all 5 of you would book together under one lead passenger. I’ll check whether there’s a repeat guest offer, any group incentive, or current promotion that can be applied to the liveaboard you want.",
+    "follow_up_rules": "Recognize loyalty and show appreciation | Verify eligibility before promising discounts | Check stacking rules for repeat and group promotions",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_014",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"My husband surfaced confused after the second dive near Elphinstone and now has tingling in his arm. We’re back on the day boat heading to Marsa Alam. What should we do?\"}]",
+    "context_gaps": "whether oxygen is being administered now | severity and progression of symptoms | boat crew and dive guide emergency actions already taken",
+    "optimal_follow_up": "This may be a serious diving medical emergency. Tell the crew immediately if you have not already done so and ask for emergency oxygen to be started now, keep him lying flat and comfortable, and do not let him dive again. The boat should activate its emergency medical procedure and arrange urgent assessment by local emergency medical support and the nearest appropriate recompression facility. Please reply with your exact location, whether oxygen is on, his age, and whether symptoms are worsening, but do not delay onboard emergency action while messaging here.",
+    "follow_up_rules": "Treat possible decompression illness as urgent | Instruct immediate onboard emergency escalation and oxygen use | Do not provide casual reassurance or delay emergency care",
+    "expected_resolution_turns": 2
+  },
+  {
+    "id": "DLG_015",
+    "conversation": "[{\"role\":\"customer\",\"message\":\"Our inbound flight to Hurghada has been delayed 6 hours and we now land after midnight. Embarkation for the liveaboard was supposed to be this evening. Are we going to miss the boat?\"}]",
+    "context_gaps": "booking reference and boat name | updated flight number and ETA | current location of vessel and operator contact status",
+    "optimal_follow_up": "I know that’s stressful. Please send your booking reference, boat name, updated flight number, and new arrival time immediately. I’ll contact the operator to check whether the vessel is still in port, whether late boarding can be arranged, or if a morning transfer to the next pickup point is possible. Keep your phone on and share any airline delay confirmation you have, as timing is critical and we need to act quickly to reduce the risk of missed embarkation.",
+    "follow_up_rules": "Treat as time-critical missed embarkation risk | Collect flight and booking details fast | Coordinate practical recovery options rather than giving generic advice",
+    "expected_resolution_turns": 2
+  }
+]

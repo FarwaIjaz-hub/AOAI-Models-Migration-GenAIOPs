@@ -1,0 +1,108 @@
+"""
+Configuration and model helpers for Azure OpenAI migration.
+
+Simple helpers to distinguish model families (v1 vs classic API, reasoning vs standard).
+All detailed model documentation lives in the notebooks and README.
+"""
+
+import os
+from typing import Optional
+from dotenv import load_dotenv
+
+
+# ---------------------------------------------------------------------------
+# Model family helpers
+# ---------------------------------------------------------------------------
+
+# Models using the new v1 API (OpenAI client with /openai/v1/ endpoint)
+V1_MODELS = {
+    "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
+    "gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5-mini", "gpt-5-nano",
+    "gpt-5-pro", "gpt-5-codex", "gpt-5.1-codex", "gpt-5.1-codex-mini",
+    "gpt-5.2-codex", "gpt-5.3-codex",
+    "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
+    "gpt-5-chat",
+    "codex-mini",
+}
+
+# Models that require max_completion_tokens instead of max_tokens
+# (all v1 models + o-series; classic gpt-4o still uses max_tokens)
+MAX_COMPLETION_TOKEN_MODELS = V1_MODELS | {
+    "o1", "o1-pro", "o3-mini", "o3", "o3-pro", "o3-deep-research", "o4-mini",
+}
+
+# Reasoning models (no temperature/top_p, use max_completion_tokens, developer role)
+REASONING_MODELS = {
+    "gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5-mini", "gpt-5-nano",
+    "gpt-5-pro", "gpt-5.3-codex", "gpt-5.2-codex",
+    "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
+}
+
+# o-series reasoning models (also no temperature/top_p, use max_completion_tokens)
+O_SERIES_MODELS = {
+    "o1", "o1-pro", "o3-mini", "o3", "o3-pro", "o3-deep-research", "o4-mini",
+}
+
+
+def is_v1(model: str) -> bool:
+    """True if the model uses the v1 API (OpenAI client)."""
+    return model in V1_MODELS
+
+
+def is_reasoning(model: str) -> bool:
+    """True if the model is a reasoning model (no temperature/top_p)."""
+    return model in REASONING_MODELS or model in O_SERIES_MODELS
+
+
+def is_o_series(model: str) -> bool:
+    """True if the model is an o-series reasoning model (o1, o3, o4-mini, etc.)."""
+    return model in O_SERIES_MODELS
+
+
+def uses_developer_role(model: str) -> bool:
+    """True if the model uses 'developer' instead of 'system' for the system message role."""
+    return model in REASONING_MODELS or model in O_SERIES_MODELS
+
+
+# ---------------------------------------------------------------------------
+# Environment configuration
+# ---------------------------------------------------------------------------
+
+def load_config(env_path: Optional[str] = None) -> dict:
+    """Load configuration from .env file and return deployment mappings."""
+    load_dotenv(env_path or ".env")
+
+    config = {
+        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
+        "api_key": os.getenv("AZURE_OPENAI_API_KEY"),
+        "deployments": {},
+    }
+
+    deployment_vars = {
+        "gpt-4o": "GPT4O_DEPLOYMENT",
+        "gpt-4o-mini": "GPT4O_MINI_DEPLOYMENT",
+        "gpt-4.1": "GPT41_DEPLOYMENT",
+        "gpt-4.1-mini": "GPT41_MINI_DEPLOYMENT",
+        "gpt-5": "GPT5_DEPLOYMENT",
+        "gpt-5.1": "GPT51_DEPLOYMENT",
+        "gpt-5.2": "GPT52_DEPLOYMENT",
+        "gpt-5-mini": "GPT5_MINI_DEPLOYMENT",
+        "gpt-5.4": "GPT54_DEPLOYMENT",
+        "gpt-5.4-mini": "GPT54_MINI_DEPLOYMENT",
+        "gpt-5-chat": "GPT5_DEPLOYMENT",
+        "o3": "O3_DEPLOYMENT",
+        "o3-mini": "O3_MINI_DEPLOYMENT",
+        "o4-mini": "O4_MINI_DEPLOYMENT",
+    }
+
+    for model_name, env_var in deployment_vars.items():
+        value = os.getenv(env_var)
+        if value:
+            config["deployments"][model_name] = value
+
+    # Foundry evaluation config
+    config["foundry_endpoint"] = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+    config["eval_model"] = os.getenv("EVAL_MODEL_DEPLOYMENT", "gpt-4.1")
+    config["model_deployment_name"] = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", config["eval_model"])
+
+    return config

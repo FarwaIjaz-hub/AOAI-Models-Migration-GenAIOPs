@@ -1,0 +1,182 @@
+[
+  {
+    "id": "CLASS_001",
+    "customer_input": "Hi, we're looking at a 7-night Red Sea liveaboard in Brothers/Daedalus/Elphinstone for late October. Can you confirm availability for two divers in a twin cabin and give the total price including marine park fees and Nitrox?",
+    "expected_category": "trip_availability_and_pricing",
+    "expected_subcategory": "liveaboard_cabin_availability",
+    "expected_priority": "medium",
+    "expected_sentiment": "neutral",
+    "context": "{\"trip_type\":\"liveaboard\",\"route\":\"BDE\",\"travel_month\":\"October\",\"party_size\":2,\"cabin_type\":\"twin\",\"nitrox_requested\":true}"
+  },
+  {
+    "id": "CLASS_002",
+    "customer_input": "I want to book the St. John's route but need to customize it with one extra hotel night in Hurghada before embarkation. Also, can you arrange private airport transfers because my flight lands after midnight?",
+    "expected_category": "booking_creation_and_customization",
+    "expected_subcategory": "add_hotel_and_private_transfer",
+    "expected_priority": "medium",
+    "expected_sentiment": "neutral",
+    "context": "{\"route\":\"St_Johns\",\"departure_port\":\"Hurghada\",\"pre_night_hotel\":1,\"transfer_type\":\"private\",\"arrival_time\":\"00:35\"}"
+  },
+  {
+    "id": "CLASS_003",
+    "customer_input": "My card was charged twice for the deposit on our Marsa Alam diving package. Please check the duplicate payment and tell me when the extra amount will be refunded.",
+    "expected_category": "payment_and_refunds",
+    "expected_subcategory": "duplicate_deposit_charge",
+    "expected_priority": "high",
+    "expected_sentiment": "negative",
+    "context": "{\"booking_stage\":\"deposit_paid\",\"payment_method\":\"credit_card\",\"package_type\":\"resort_stay\",\"destination\":\"Marsa_Alam\",\"currency\":\"EUR\"}"
+  },
+  {
+    "id": "CLASS_004",
+    "customer_input": "We need to move our booking from 12 May to any departure in June because my buddy's annual leave changed. What change fees would apply, and can our current cabin assignment be kept?",
+    "expected_category": "booking_changes_and_cancellations",
+    "expected_subcategory": "date_change_request",
+    "expected_priority": "medium",
+    "expected_sentiment": "neutral",
+    "context": "{\"original_departure_date\":\"2026-05-12\",\"requested_month\":\"June\",\"booking_type\":\"liveaboard\",\"cabin_assignment\":\"upper_deck_twin\"}"
+  },
+  {
+    "id": "CLASS_005",
+    "customer_input": "I'm a UK passport holder flying to Egypt for a Red Sea dive safari next month. Do I need a visa in advance, and is there any passport validity rule for boarding the boat?",
+    "expected_category": "travel_documents_and_entry_requirements",
+    "expected_subcategory": "egypt_visa_and_passport_validity",
+    "expected_priority": "high",
+    "expected_sentiment": "neutral",
+    "context": "{\"nationality\":\"UK\",\"destination_country\":\"Egypt\",\"trip_type\":\"dive_safari\",\"departure_within_days\":28}"
+  },
+  {
+    "id": "CLASS_006",
+    "customer_input": "Our inbound flight to Hurghada was moved and now lands only 40 minutes before the scheduled marina transfer. Is there a later transfer, or are we at risk of missing embarkation?",
+    "expected_category": "flights_transfers_and_logistics",
+    "expected_subcategory": "airport_transfer_timing_conflict",
+    "expected_priority": "high",
+    "expected_sentiment": "negative",
+    "context": "{\"arrival_airport\":\"HRG\",\"transfer_mode\":\"shared_marina_transfer\",\"time_buffer_minutes\":40,\"trip_type\":\"liveaboard\"}"
+  },
+  {
+    "id": "CLASS_007",
+    "customer_input": "Can you tell me whether the lower deck cabins on this Red Sea liveaboard have private bathrooms and individually controlled air conditioning? I'm also wondering how noisy they are near the engines.",
+    "expected_category": "accommodation_and_liveaboard_details",
+    "expected_subcategory": "cabin_amenities_and_noise",
+    "expected_priority": "low",
+    "expected_sentiment": "neutral",
+    "context": "{\"vessel_area\":\"lower_deck\",\"amenities_asked\":[\"ensuite\",\"air_conditioning\",\"noise_level\"],\"trip_type\":\"liveaboard\"}"
+  },
+  {
+    "id": "CLASS_008",
+    "customer_input": "I have Advanced Open Water with 35 logged dives but no recent drift experience. Is that enough for Brothers and Elphinstone, and do you rent 15L tanks and DSMBs onboard?",
+    "expected_category": "diving_requirements_and_equipment",
+    "expected_subcategory": "experience_level_and_gear_rental",
+    "expected_priority": "medium",
+    "expected_sentiment": "neutral",
+    "context": "{\"certification\":\"AOW\",\"logged_dives\":35,\"recent_drift_dives\":0,\"route\":\"Brothers_Elphinstone\",\"equipment_requested\":[\"15L_tank\",\"DSMB\"]}"
+  },
+  {
+    "id": "CLASS_009",
+    "customer_input": "We're considering early March for the northern wrecks route. How rough is the sea usually then, and what are the chances of strong wind changing the itinerary?",
+    "expected_category": "itinerary_weather_and_marine_conditions",
+    "expected_subcategory": "seasonal_wind_and_route_changes",
+    "expected_priority": "low",
+    "expected_sentiment": "neutral",
+    "context": "{\"route\":\"northern_wrecks\",\"travel_month\":\"March\",\"concerns\":[\"sea_state\",\"wind\",\"itinerary_change_risk\"]}"
+  },
+  {
+    "id": "CLASS_010",
+    "customer_input": "I have mild asthma and take an inhaler occasionally, but I've been cleared to dive before. Do you need a medical form in advance for a Red Sea liveaboard, and is oxygen carried onboard?",
+    "expected_category": "health_safety_and_medical",
+    "expected_subcategory": "pre_existing_condition_clearance",
+    "expected_priority": "high",
+    "expected_sentiment": "neutral",
+    "context": "{\"medical_condition\":\"mild_asthma\",\"trip_type\":\"liveaboard\",\"medical_clearance_status\":\"previously_cleared\",\"oxygen_query\":true}"
+  },
+  {
+    "id": "CLASS_011",
+    "customer_input": "We're already onboard and the cabin AC has stopped working for the second night in a row. It's extremely hot and no one has fixed it yet, so please escalate this immediately.",
+    "expected_category": "on_trip_service_issue",
+    "expected_subcategory": "cabin_air_conditioning_failure",
+    "expected_priority": "high",
+    "expected_sentiment": "very_negative",
+    "context": "{\"trip_stage\":\"onboard\",\"issue_location\":\"cabin\",\"issue_type\":\"air_conditioning\",\"nights_affected\":2}"
+  },
+  {
+    "id": "CLASS_012",
+    "customer_input": "I came back from the Red Sea trip last week and wanted to say the guides were fantastic and the food was much better than expected. Please pass on my thanks to the crew, especially Ahmed and Mina.",
+    "expected_category": "post_trip_feedback_and_claims",
+    "expected_subcategory": "positive_crew_feedback",
+    "expected_priority": "low",
+    "expected_sentiment": "very_positive",
+    "context": "{\"trip_completed_days_ago\":7,\"feedback_type\":\"compliment\",\"staff_mentioned\":[\"Ahmed\",\"Mina\"],\"trip_type\":\"liveaboard\"}"
+  },
+  {
+    "id": "CLASS_013",
+    "customer_input": "I've traveled with you twice before for Red Sea diving holidays. Do repeat guests get any discount on Nitrox packages or cabin upgrades for the next booking?",
+    "expected_category": "loyalty_promotions_and_repeat_guest",
+    "expected_subcategory": "repeat_guest_discount_inquiry",
+    "expected_priority": "low",
+    "expected_sentiment": "positive",
+    "context": "{\"previous_trips\":2,\"loyalty_status\":\"repeat_guest\",\"benefits_asked\":[\"nitrox_discount\",\"cabin_upgrade\"]}"
+  },
+  {
+    "id": "CLASS_014",
+    "customer_input": "Do your Red Sea packages include non-diver options? My partner doesn't dive but wants to join me in Marsa Shagra and maybe snorkel while I'm on the house reef.",
+    "expected_category": "general_information",
+    "expected_subcategory": "non_diver_package_options",
+    "expected_priority": "low",
+    "expected_sentiment": "neutral",
+    "context": "{\"destination\":\"Marsa_Shagra\",\"traveler_mix\":\"diver_and_non_diver\",\"activities_asked\":[\"snorkeling\",\"resort_stay\"]}"
+  },
+  {
+    "id": "CLASS_015",
+    "customer_input": "Earn $5,000 a week promoting crypto mining to your travel customers. Reply with your WhatsApp number and I will send the investment plan.",
+    "expected_category": "spam_or_irrelevant",
+    "expected_subcategory": "unsolicited_financial_promotion",
+    "expected_priority": "low",
+    "expected_sentiment": "negative",
+    "context": "{\"message_type\":\"spam\",\"channel\":\"email\",\"relevance\":\"none\",\"contains_financial_promo\":true}"
+  },
+  {
+    "id": "CLASS_016",
+    "customer_input": "We're dreaming about our first Red Sea dive trip and can't decide between a liveaboard and a shore-based resort in Marsa Alam. We love reefs, turtles, and easy logistics more than hardcore technical diving.",
+    "expected_category": "inspiration",
+    "expected_subcategory": "trip_style_recommendation",
+    "expected_priority": "medium",
+    "expected_sentiment": "positive",
+    "context": "{\"traveler_experience\":\"first_red_sea_trip\",\"preferences\":[\"reefs\",\"turtles\",\"easy_logistics\"],\"options_considered\":[\"liveaboard\",\"shore_based_resort\"]}"
+  },
+  {
+    "id": "CLASS_017",
+    "customer_input": "I haven't booked yet, but my passport expires five months after my travel date and I'm due to fly to Egypt in two weeks. Can I still travel, or should I renew immediately?",
+    "expected_category": "passport_or_visa_travel_risk",
+    "expected_subcategory": "insufficient_passport_validity",
+    "expected_priority": "critical",
+    "expected_sentiment": "neutral",
+    "context": "{\"booking_status\":\"not_booked\",\"passport_validity_months_remaining\":5,\"departure_within_days\":14,\"destination_country\":\"Egypt\"}"
+  },
+  {
+    "id": "CLASS_018",
+    "customer_input": "I'm at Hurghada airport now and our flight from Cairo was delayed again. The boat is due to leave this evening, and I don't think we'll reach the marina before departure.",
+    "expected_category": "missed_embarkation_risk",
+    "expected_subcategory": "same_day_flight_delay_to_liveaboard",
+    "expected_priority": "critical",
+    "expected_sentiment": "very_negative",
+    "context": "{\"trip_stage\":\"in_transit\",\"current_location\":\"Hurghada_airport\",\"delay_type\":\"domestic_connection_delay\",\"embarkation_today\":true}"
+  },
+  {
+    "id": "CLASS_019",
+    "customer_input": "Since yesterday's final dive I've had shoulder pain, tingling in my arm, and unusual fatigue. I'm back at the hotel in Port Ghalib now—what should I do?",
+    "expected_category": "possible_decompression_illness",
+    "expected_subcategory": "post_dive_dci_symptoms_reported",
+    "expected_priority": "critical",
+    "expected_sentiment": "negative",
+    "context": "{\"trip_stage\":\"post_dive\",\"current_location\":\"Port_Ghalib_hotel\",\"symptoms\":[\"shoulder_pain\",\"arm_tingling\",\"fatigue\"],\"last_dive_within_hours\":24}"
+  },
+  {
+    "id": "CLASS_020",
+    "customer_input": "There was a fire smell in the engine room area tonight and passengers were told to gather on the dive deck. The crew seems in control, but I need urgent confirmation of the safety situation and next steps.",
+    "expected_category": "onboard_safety_incident",
+    "expected_subcategory": "suspected_engine_room_fire",
+    "expected_priority": "critical",
+    "expected_sentiment": "very_negative",
+    "context": "{\"trip_stage\":\"on_trip\",\"incident_type\":\"possible_fire\",\"location_on_vessel\":\"engine_room_area\",\"passenger_muster_called\":true}"
+  }
+]
