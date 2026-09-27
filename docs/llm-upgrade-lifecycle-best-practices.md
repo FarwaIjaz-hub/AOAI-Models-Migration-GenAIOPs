@@ -1,7 +1,7 @@
 # LLM Upgrade Lifecycle Best Practices — Azure OpenAI & Microsoft Foundry
 
 > **⚠️ IMPORTANT: Retirement dates and model availability change frequently.**
-> Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements)** for the latest authoritative information. See also: **[What's New in Azure OpenAI](https://learn.microsoft.com/azure/ai-foundry/openai/whats-new)**.
+> Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)** for the latest authoritative information. See also: **[What's New in Azure OpenAI](https://learn.microsoft.com/azure/ai-foundry/openai/whats-new)**.
 
 > **Audience:** Platform teams, architects, and engineering leads building on Azure OpenAI / Microsoft Foundry.
 > **Last updated:** May 2026
@@ -85,7 +85,7 @@ graph TD
 |---|---|---|---|
 | `model-router` | 2025-11-18 | 2027-05-20 | Auto-routes requests to optimal model |
 
-> ⚠️ These are "not sooner than" dates — they can be extended but not shortened. Always check the [official retirements page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements).
+> ⚠️ These are "not sooner than" dates — they can be extended but not shortened. Always check the [official retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule).
 > 📌 **Note:** ChatGPT (consumer) and Azure Foundry (enterprise) have **independent** retirement schedules. Don't rely on ChatGPT announcements for Azure dates.
 
 ---
@@ -896,7 +896,7 @@ Fine-tuned models follow a **two-phase retirement**: training retirement first, 
 - Plan to **re-fine-tune on the successor base model** before deployment retirement.
 - Budget time for data preparation, training, and evaluation of the new fine-tuned model.
 
-Current fine-tuned model dates (verify on [official page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements)):
+Current fine-tuned model dates (verify on [official page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)):
 - `gpt-4o` fine-tuned: training retirement no earlier than **2026-09-30**, deployment retirement **2027-03-31**
 - `gpt-4o-mini` fine-tuned: same schedule as `gpt-4o` fine-tuned
 
@@ -920,7 +920,7 @@ Embedding models (e.g., `text-embedding-3-large`, `text-embedding-ada-002`) are 
 
 Use this checklist when a model retirement is announced:
 
-- [ ] **Verify notification** — confirm retirement date and replacement model from the [official page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements).
+- [ ] **Verify notification** — confirm retirement date and replacement model from the [official page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule).
 - [ ] **Inventory impact** — identify all deployments using the retiring model across all subscriptions/regions.
 - [ ] **Deploy replacement** — create a new deployment with the successor model in your test environment.
 - [ ] **Run evaluations** — execute your golden dataset against the new model; compare results.
@@ -938,7 +938,7 @@ Use this checklist when a model retirement is announced:
 
 | Resource | Link |
 |---|---|
-| Model deprecation & retirement dates | https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements |
+| Model deprecation & retirement dates | https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule |
 | Model version upgrade guide | https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-versions |
 | API version lifecycle | https://learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle |
 | Azure OpenAI Evaluations (portal) | https://learn.microsoft.com/azure/ai-foundry/openai/how-to/evaluations |
@@ -959,7 +959,7 @@ Use this checklist when a model retirement is announced:
 *This document should be reviewed quarterly and updated when Microsoft publishes new lifecycle policies or tooling changes.*
 
 > **📌 Official Documentation Bookmarks:**
-> - [Azure OpenAI Model Retirements](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements) — authoritative retirement dates
+> - [Azure OpenAI Model Retirements](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule) — authoritative retirement dates
 > - [Azure OpenAI Models Overview](https://learn.microsoft.com/azure/ai-services/openai/concepts/models) — model capabilities & availability
 > - [What's New in Azure OpenAI](https://learn.microsoft.com/azure/ai-foundry/openai/whats-new) — latest changes
 > - [Responses API](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/responses) — new API surface

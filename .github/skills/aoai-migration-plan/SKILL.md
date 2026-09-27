@@ -14,7 +14,7 @@ description: >
 
 # Azure OpenAI Migration Execution Plan Skill
 
-> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements)** before finalizing any migration timeline.
+> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)** before finalizing any migration timeline.
 
 ## Purpose
 
@@ -346,7 +346,7 @@ When drafting the final plan for a user:
 
 ## References
 
-- [Azure OpenAI Model Retirements](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements) — authoritative retirement dates
+- [Azure OpenAI Model Retirements](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule) — authoritative retirement dates
 - [Azure OpenAI Models Overview](https://learn.microsoft.com/azure/ai-services/openai/concepts/models) — model capabilities and availability
 - [API Version Lifecycle](https://learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle) — API lifecycle guidance
 - [What's New in Azure OpenAI](https://learn.microsoft.com/azure/ai-foundry/openai/whats-new) — latest platform changes

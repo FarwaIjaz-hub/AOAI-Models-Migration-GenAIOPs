@@ -1,6 +1,6 @@
 # Migration Feasibility Assessment Framework
 
-> **⚠️ Important:** Retirement dates, model capabilities, and regional availability change frequently. Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements)** before committing to a migration plan.
+> **⚠️ Important:** Retirement dates, model capabilities, and regional availability change frequently. Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)** before committing to a migration plan.
 >
 > Last verified: **May 2026**
 

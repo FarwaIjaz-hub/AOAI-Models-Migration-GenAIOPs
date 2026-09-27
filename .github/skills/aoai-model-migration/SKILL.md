@@ -13,7 +13,7 @@ description: >
 
 # Azure OpenAI Model Migration Skill
 
-> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements)**.
+> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)**.
 
 ## Purpose
 
@@ -320,7 +320,7 @@ Azure OpenAI now supports the **Responses API** alongside Chat Completions. It o
 
 ## References
 
-- [Azure OpenAI Model Retirements](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements) — authoritative retirement dates
+- [Azure OpenAI Model Retirements](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule) — authoritative retirement dates
 - [Azure OpenAI Models Overview](https://learn.microsoft.com/azure/ai-services/openai/concepts/models) — model capabilities & availability
 - [GPT-5 vs GPT-4.1: Choosing the Right Model](https://learn.microsoft.com/azure/ai-services/openai/concepts/gpt-5-vs-gpt-41)
 - [Responses API](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/responses) — new API surface

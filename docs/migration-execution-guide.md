@@ -1,6 +1,6 @@
 # Migration Execution Guide — Phased Rollout for Azure OpenAI Models
 
-> **⚠️ Important:** Model retirement dates, regional availability, and replacement targets change frequently. Before you commit to a rollout plan, verify the current state on the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements)** and confirm availability in every required region.
+> **⚠️ Important:** Model retirement dates, regional availability, and replacement targets change frequently. Before you commit to a rollout plan, verify the current state on the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)** and confirm availability in every required region.
 >
 > **Last verified:** May 2026  
 > **Audience:** Platform teams, SREs, engineering leads

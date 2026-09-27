@@ -1,6 +1,6 @@
 # Key API Changes by Model Family
 
-> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements)**.
+> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)**.
 
 This document covers the technical API differences you need to handle when migrating between Azure OpenAI model families. For migration paths and timelines, see the [README](../README.md).
 

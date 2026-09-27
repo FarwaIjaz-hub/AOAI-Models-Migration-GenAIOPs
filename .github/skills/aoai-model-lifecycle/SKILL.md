@@ -14,7 +14,7 @@ description: >
 
 # Azure OpenAI Model Lifecycle Management Skill
 
-> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements)**.
+> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)**.
 > See also: **[What's New in Azure OpenAI](https://learn.microsoft.com/azure/ai-foundry/openai/whats-new)**.
 
 ## Purpose
@@ -90,7 +90,7 @@ Model Launch (GA)
 | `model-router` | 2025-11-18 | 2027-05-20 | Auto-routes requests to optimal model |
 | `codex-mini` | 2025-05-16 | 2026-11-15 | Lightweight code generation |
 
-> Always verify against the [official retirements page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements).
+> Always verify against the [official retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule).
 
 ### Deployment Type Timelines
 
@@ -127,7 +127,7 @@ Model Launch (GA)
 
 Follow this when a model retirement is announced:
 
-- [ ] **Verify notification** — confirm retirement date and replacement model from the [official page](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements)
+- [ ] **Verify notification** — confirm retirement date and replacement model from the [official page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)
 - [ ] **Inventory impact** — identify all deployments using the retiring model across all subscriptions/regions
 - [ ] **Deploy replacement** — create new deployment with the successor model in test environment
 - [ ] **Run evaluations** — execute golden dataset against new model; compare results (use `aoai-migration-evaluation` skill)
@@ -306,7 +306,7 @@ See `docs/building-golden-datasets.md` for framework-specific integration (LangC
 
 ## References
 
-- [Azure OpenAI Model Retirements](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements) — authoritative retirement dates
+- [Azure OpenAI Model Retirements](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule) — authoritative retirement dates
 - [Model Version Upgrade Guide](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-versions)
 - [Azure OpenAI Models Overview](https://learn.microsoft.com/azure/ai-services/openai/concepts/models) — model capabilities & availability
 - [API Version Lifecycle](https://learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle)

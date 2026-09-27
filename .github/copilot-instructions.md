@@ -57,7 +57,7 @@ model_migration_eval/         # Web UI for visual comparison (OUT OF SCOPE for m
   - `> **💡 Tip:**` — best practices
   - `> **📝 Note:**` — clarifications
 - **Diagrams**: use Mermaid (renders on GitHub) — no ASCII art
-- **Dates**: always include "Last verified: Month YYYY" at the top; link to [official Azure OpenAI retirements page](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements) as authoritative source
+- **Dates**: always include "Last verified: Month YYYY" at the top; link to [official Azure OpenAI retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule) as authoritative source
 - **No bold cost claims or specific pricing** — these change frequently; link to official pricing pages instead
 
 ---

@@ -1,6 +1,6 @@
 # Migration Paths — Choosing Your Target Model
 
-> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements)**.
+> **⚠️ Retirement dates and model availability change frequently.** Always verify against the **[official Azure OpenAI Model Retirements page](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule)**.
 
 This guide helps you pick the right target model when migrating from GPT-4o, GPT-4o-mini, or o-series models.
 
